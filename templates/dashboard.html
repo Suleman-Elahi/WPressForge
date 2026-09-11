@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1>Overview</h1>
+    <p>Every site and server the panel manages.</p>
+  </div>
+  <div class="spacer"></div>
+  <a class="btn" href="/servers/new">Attach server</a>
+  <a class="btn primary" href="/sites/new">New site</a>
+</div>
+
+<div class="grid stats">
+  <div class="stat">
+    <div class="label">Sites</div>
+    <div class="value">{{ total_sites }}</div>
+    <div class="sub">{{ online_sites }} online</div>
+  </div>
+  <div class="stat">
+    <div class="label">Servers</div>
+    <div class="value">{{ total_servers }}</div>
+    <div class="sub">agents attached</div>
+  </div>
+  <div class="stat">
+    <div class="label">Active jobs</div>
+    <div class="value">{{ active_jobs }}</div>
+    <div class="sub"><a href="/jobs">job queue</a></div>
+  </div>
+  <div class="stat">
+    <div class="label">Panel</div>
+    <div class="value">OK</div>
+    <div class="sub">workers running</div>
+  </div>
+</div>
+
+<div class="grid two">
+  <section class="card">
+    <div class="card-head">
+      <h2>Servers</h2>
+      <div class="spacer"></div>
+      <a class="btn sm ghost" href="/servers">All servers</a>
+    </div>
+    {% if servers.is_empty() %}
+    <div class="empty">
+      <h3>No servers yet</h3>
+      <p>Install <code>wp-agent</code> on a Linux host, then attach it here.</p>
+      <a class="btn primary" href="/servers/new">Attach server</a>
+    </div>
+    {% else %}
+    <div class="card-body gap">
+      {% for row in servers %}
+      <article class="gap">
+        <div class="flex flex-wrap">
+          <a href="/servers/{{ row.server.id }}"><strong>{{ row.server.name }}</strong></a>
+          <span class="pill {{ row.server.status.tone() }}"><span class="dot"></span>{{ row.server.status }}</span>
+          <span class="muted">{{ row.server.location_label() }}</span>
+          <span class="spacer" style="margin-left:auto"></span>
+          <span class="muted">{{ row.site_count }} sites</span>
+        </div>
+        {% if row.metrics.has_data() %}
+        <div>
+          <div class="meter-row">
+            <div class="top"><span>CPU</span><b>{{ row.metrics.cpu_label() }}</b></div>
+            <div class="meter {{ row.metrics.cpu_tone() }}"><span style="width:{{ row.metrics.cpu_label() }}"></span></div>
+          </div>
+          <div class="meter-row">
+            <div class="top"><span>Memory · {{ row.metrics.memory_total_label() }}</span><b>{{ row.metrics.memory_label() }}</b></div>
+            <div class="meter {{ row.metrics.memory_tone() }}"><span style="width:{{ row.metrics.memory_label() }}"></span></div>
+          </div>
+          <div class="meter-row">
+            <div class="top"><span>Disk · {{ row.metrics.disk_total_label() }}</span><b>{{ row.metrics.disk_label() }}</b></div>
+            <div class="meter {{ row.metrics.disk_tone() }}"><span style="width:{{ row.metrics.disk_label() }}"></span></div>
+          </div>
+        </div>
+        {% else %}
+        <p class="muted">Waiting for the first heartbeat. Last seen {{ row.server.last_seen_label() }}.</p>
+        {% endif %}
+      </article>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>Recent activity</h2>
+      <div class="spacer"></div>
+      <a class="btn sm ghost" href="/jobs">All jobs</a>
+    </div>
+    {% if jobs.is_empty() %}
+    <div class="empty">
+      <h3>Nothing has run yet</h3>
+      <p>Actions you trigger show up here as jobs with per-step progress.</p>
+    </div>
+    {% else %}
+    <div class="table-wrap">
+      <table class="data stack">
+        <thead>
+          <tr><th>Job</th><th>Target</th><th>Status</th><th class="right">When</th></tr>
+        </thead>
+        <tbody>
+        {% for row in jobs %}
+          <tr>
+            <td data-label="Job"><a href="/jobs/{{ row.job.id }}">{{ row.job.kind.label() }}</a></td>
+            <td data-label="Target">{% if let Some(domain) = row.site_domain %}{{ domain }}{% else %}—{% endif %}</td>
+            <td data-label="Status">
+              <span class="pill {{ row.job.status.tone() }}"><span class="dot {% if row.job.is_active() %}pulse{% endif %}"></span>{{ row.job.status }}</span>
+            </td>
+            <td data-label="When" class="right nowrap">{{ row.job.created_label() }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </section>
+</div>
+
+<section class="card">
+  <div class="card-head">
+    <h2>Sites</h2>
+    <div class="spacer"></div>
+    <a class="btn sm ghost" href="/sites">All sites</a>
+  </div>
+  {% if sites.is_empty() %}
+  <div class="empty">
+    <h3>No sites yet</h3>
+    <p>One form, one job: filesystem, database, container, Nginx, TLS and WordPress.</p>
+    <a class="btn primary" href="/sites/new">Create your first site</a>
+  </div>
+  {% else %}
+  <div class="table-wrap">
+    <table class="data stack">
+      <thead>
+        <tr><th>Site</th><th>Status</th><th>PHP</th><th>WordPress</th><th>SSL</th><th>Server</th></tr>
+      </thead>
+      <tbody>
+      {% for row in sites %}
+        <tr>
+          <td data-label="Site">
+            <span class="row-title">
+              <strong><a href="/sites/{{ row.site.id }}">{{ row.site.domain }}</a></strong>
+              <span>{{ row.site.display_title() }}</span>
+            </span>
+          </td>
+          <td data-label="Status"><span class="pill {{ row.site.status.tone() }}"><span class="dot"></span>{{ row.site.status }}</span></td>
+          <td data-label="PHP"><span class="tag">{{ row.site.php_version }}</span></td>
+          <td data-label="WordPress">{{ row.site.wp_label() }}</td>
+          <td data-label="SSL"><span class="pill {{ row.site.ssl_tone() }}">{{ row.site.ssl_label() }}</span></td>
+          <td data-label="Server"><a href="/servers/{{ row.site.server_id }}">{{ row.server_name }}</a></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</section>
+
+{% endblock %}

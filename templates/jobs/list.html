@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1>Jobs</h1>
+    <p>Every mutating action is a job with per-step progress and an audit trail.</p>
+  </div>
+</div>
+
+<section class="card">
+  {# The table refreshes itself: the response is the same page, and HTMX picks
+     out just this fragment. No JSON, no client state. #}
+  <div id="jobs-table" hx-get="/jobs" hx-trigger="every 5s" hx-select="#jobs-table" hx-swap="outerHTML">
+    {% if jobs.is_empty() %}
+    <div class="empty">
+      <h3>The queue is empty</h3>
+      <p>Create a site or trigger an action to see jobs here.</p>
+    </div>
+    {% else %}
+    <div class="table-wrap">
+      <table class="data stack">
+        <thead>
+          <tr><th>#</th><th>Job</th><th>Target</th><th>Progress</th><th>Status</th><th>By</th><th class="right">Duration</th></tr>
+        </thead>
+        <tbody>
+        {% for row in jobs %}
+          <tr>
+            <td data-label="#" class="mono"><a href="/jobs/{{ row.job.id }}">{{ row.job.id }}</a></td>
+            <td data-label="Job">
+              <span class="row-title">
+                <strong><a href="/jobs/{{ row.job.id }}">{{ row.job.kind.label() }}</a></strong>
+                <span class="mono">{{ row.job.kind.as_str() }}</span>
+              </span>
+            </td>
+            <td data-label="Target">
+              {% if let Some(domain) = row.site_domain %}{{ domain }}{% else if let Some(name) = row.server_name %}{{ name }}{% else %}—{% endif %}
+            </td>
+            <td data-label="Progress" style="min-width:170px">
+              <span class="progress-big"><span style="width:{{ row.job.progress_percent() }}%"></span></span>
+              <span class="muted">{{ row.job.message }}</span>
+            </td>
+            <td data-label="Status"><span class="pill {{ row.job.status.tone() }}"><span class="dot {% if row.job.is_active() %}pulse{% endif %}"></span>{{ row.job.status }}</span></td>
+            <td data-label="By" class="muted">{{ row.actor }}</td>
+            <td data-label="Duration" class="right nowrap">{{ row.duration() }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </div>
+</section>
+
+{% endblock %}

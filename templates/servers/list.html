@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1>Servers</h1>
+    <p>Each server runs the <code>wp-agent</code> daemon and owns all privileged operations.</p>
+  </div>
+  <div class="spacer"></div>
+  <a class="btn primary" href="/servers/new">Attach server</a>
+</div>
+
+{% if servers.is_empty() %}
+<section class="card">
+  <div class="empty">
+    <h3>No servers attached</h3>
+    <p>Install the agent on a clean Ubuntu or Debian host, then register it with its URL and token.</p>
+    <a class="btn primary" href="/servers/new">Attach server</a>
+  </div>
+</section>
+{% else %}
+<div class="grid two">
+  {% for row in servers %}
+  <section class="card">
+    <div class="card-head">
+      <h2><a href="/servers/{{ row.server.id }}">{{ row.server.name }}</a></h2>
+      <span class="pill {{ row.server.status.tone() }}"><span class="dot"></span>{{ row.server.status }}</span>
+      <div class="spacer"></div>
+      <span class="muted">{{ row.site_count }} sites</span>
+    </div>
+    <div class="card-body">
+      <dl class="kv mb">
+        <dt>Address</dt><dd class="mono">{{ row.server.ip_address }}</dd>
+        <dt>Agent</dt><dd class="mono">{{ row.server.agent_url }}</dd>
+        <dt>Location</dt><dd>{{ row.server.location_label() }}</dd>
+        <dt>Last seen</dt><dd>{{ row.server.last_seen_label() }}</dd>
+      </dl>
+
+      {% if row.metrics.has_data() %}
+      <div class="meter-row">
+        <div class="top"><span>CPU</span><b>{{ row.metrics.cpu_label() }}</b></div>
+        <div class="meter {{ row.metrics.cpu_tone() }}"><span style="width:{{ row.metrics.cpu_label() }}"></span></div>
+      </div>
+      <div class="meter-row">
+        <div class="top"><span>Memory</span><b>{{ row.metrics.memory_label() }}</b></div>
+        <div class="meter {{ row.metrics.memory_tone() }}"><span style="width:{{ row.metrics.memory_label() }}"></span></div>
+      </div>
+      <div class="meter-row">
+        <div class="top"><span>Disk</span><b>{{ row.metrics.disk_label() }}</b></div>
+        <div class="meter {{ row.metrics.disk_tone() }}"><span style="width:{{ row.metrics.disk_label() }}"></span></div>
+      </div>
+      {% else %}
+      <p class="muted">No metrics yet.</p>
+      {% endif %}
+
+      <div class="btn-row mt">
+        <a class="btn sm" href="/servers/{{ row.server.id }}">Manage</a>
+        <a class="btn sm ghost" href="/sites/new">New site here</a>
+      </div>
+    </div>
+  </section>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% endblock %}

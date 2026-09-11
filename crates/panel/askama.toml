@@ -1,0 +1,4 @@
+# Templates live at the workspace root so designers do not have to dig through
+# the crate tree.
+[general]
+dirs = ["../../templates"]

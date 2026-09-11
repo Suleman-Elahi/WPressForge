@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1>Sites</h1>
+    <p>{{ sites.len() }} of {{ total }} sites</p>
+  </div>
+  <div class="spacer"></div>
+  <a class="btn primary" href="/sites/new">New site</a>
+</div>
+
+<form class="card card-body toolbar" method="get" action="/sites">
+  <input class="search" type="search" name="q" value="{{ query }}" placeholder="Filter by domain or title  ( / )" aria-label="Filter sites">
+  <select name="status" aria-label="Filter by status">
+    <option value="" {% if status_filter == "" %}selected{% endif %}>Any status</option>
+    <option value="online" {% if status_filter == "online" %}selected{% endif %}>Online</option>
+    <option value="stopped" {% if status_filter == "stopped" %}selected{% endif %}>Stopped</option>
+    <option value="provisioning" {% if status_filter == "provisioning" %}selected{% endif %}>Provisioning</option>
+    <option value="failed" {% if status_filter == "failed" %}selected{% endif %}>Failed</option>
+  </select>
+  <button class="btn" type="submit">Apply</button>
+  {% if query != "" || status_filter != "" %}<a class="btn ghost" href="/sites">Clear</a>{% endif %}
+</form>
+
+<section class="card">
+  {% if sites.is_empty() %}
+  <div class="empty">
+    <h3>No sites match</h3>
+    <p>Adjust the filter, or create a new site.</p>
+    <a class="btn primary" href="/sites/new">New site</a>
+  </div>
+  {% else %}
+  <div class="table-wrap">
+    <table class="data stack">
+      <thead>
+        <tr>
+          <th>Site</th><th>Status</th><th>PHP</th><th>WP</th><th>SSL</th>
+          <th>Cache</th><th>Resources</th><th>Server</th><th></th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for row in sites %}
+        <tr>
+          <td data-label="Site">
+            <span class="row-title">
+              <strong><a href="/sites/{{ row.site.id }}">{{ row.site.domain }}</a></strong>
+              <span>
+                {{ row.site.display_title() }}
+                {% if row.site.is_staging() %}· <span class="pill info">staging</span>{% endif %}
+              </span>
+            </span>
+          </td>
+          <td data-label="Status"><span class="pill {{ row.site.status.tone() }}"><span class="dot"></span>{{ row.site.status }}</span></td>
+          <td data-label="PHP"><span class="tag">{{ row.site.php_version }}</span></td>
+          <td data-label="WP">{{ row.site.wp_label() }}</td>
+          <td data-label="SSL"><span class="pill {{ row.site.ssl_tone() }}">{{ row.site.ssl_label() }}</span></td>
+          <td data-label="Cache">{{ row.site.cache_label() }}</td>
+          <td data-label="Resources" class="nowrap">{{ row.site.cpu_label() }} · {{ row.site.memory_label() }}</td>
+          <td data-label="Server"><a href="/servers/{{ row.site.server_id }}">{{ row.server_name }}</a></td>
+          <td class="actions">
+            <a class="btn sm" href="/sites/{{ row.site.id }}">Manage</a>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</section>
+
+{% endblock %}

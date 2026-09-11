@@ -1,0 +1,14 @@
+{# HTMX fragment: live status banner on the site page. #}
+<div class="banner {% if !active_jobs.is_empty() %}warn{% endif %}">
+  <span class="pill {{ site.site.status.tone() }}"><span class="dot {% if !active_jobs.is_empty() %}pulse{% endif %}"></span>{{ site.site.status }}</span>
+
+  {% if active_jobs.is_empty() %}
+  <span class="muted">PHP {{ site.site.php_version }} · WordPress {{ site.site.wp_label() }} · {{ site.site.cache_label() }} · {{ site.site.ssl_label() }}</span>
+  {% else %}
+  {% for row in active_jobs %}
+  <span>{{ row.job.kind.label() }} — {{ row.job.message }}</span>
+  <span class="progress-big" style="flex:1;max-width:220px"><span style="width:{{ row.job.progress_percent() }}%"></span></span>
+  <a class="btn sm ghost" href="/jobs/{{ row.job.id }}">View job</a>
+  {% endfor %}
+  {% endif %}
+</div>

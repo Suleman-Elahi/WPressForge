@@ -1,0 +1,211 @@
+use super::{redirect_with_flash, render, Chrome, FlashQuery};
+use crate::auth::CurrentUser;
+use crate::db;
+use crate::error::{AppError, AppResult};
+use crate::state::AppState;
+use askama::Template;
+use axum::extract::{Path, Query, State};
+use axum::response::Response;
+use axum::Form;
+use serde::Deserialize;
+use wp_common::models::ServerStatus;
+
+#[derive(Template)]
+#[template(path = "servers/list.html")]
+struct ListTemplate {
+    chrome: Chrome,
+    servers: Vec<db::servers::ServerRow>,
+}
+
+pub async fn list(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Query(query): Query<FlashQuery>,
+) -> AppResult<Response> {
+    let servers = db::servers::list(&state.db).await?;
+    Ok(render(ListTemplate {
+        chrome: Chrome::new(&state, &user, "servers", "Servers", query.flash).await,
+        servers,
+    }))
+}
+
+#[derive(Template)]
+#[template(path = "servers/detail.html")]
+struct DetailTemplate {
+    chrome: Chrome,
+    server: db::servers::ServerRow,
+    sites: Vec<db::sites::SiteRow>,
+    jobs: Vec<db::jobs::JobRow>,
+}
+
+pub async fn detail(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<i64>,
+    Query(query): Query<FlashQuery>,
+) -> AppResult<Response> {
+    let server = db::servers::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+    let sites = db::sites::list_for_server(&state.db, id).await?;
+    let jobs = db::jobs::list(&state.db, 6).await?;
+
+    Ok(render(DetailTemplate {
+        chrome: Chrome::new(
+            &state,
+            &user,
+            "servers",
+            server.server.name.clone(),
+            query.flash,
+        )
+        .await,
+        server,
+        sites,
+        jobs,
+    }))
+}
+
+#[derive(Template)]
+#[template(path = "servers/new.html")]
+struct NewTemplate {
+    chrome: Chrome,
+    /// Token the new agent must be installed with.
+    suggested_token: String,
+}
+
+pub async fn new_form(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Query(query): Query<FlashQuery>,
+) -> AppResult<Response> {
+    Ok(render(NewTemplate {
+        chrome: Chrome::new(&state, &user, "servers", "Attach server", query.flash).await,
+        suggested_token: crate::auth::random_token(),
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NewServerForm {
+    pub name: String,
+    pub agent_url: String,
+    pub agent_token: String,
+    #[serde(default)]
+    pub hostname: String,
+    #[serde(default)]
+    pub ip_address: String,
+    #[serde(default)]
+    pub provider: String,
+    #[serde(default)]
+    pub region: String,
+}
+
+pub async fn create(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Form(form): Form<NewServerForm>,
+) -> AppResult<Response> {
+    let name = form.name.trim();
+    if name.is_empty() {
+        return Err(AppError::BadRequest("server name is required".into()));
+    }
+    if !form.agent_url.starts_with("http") {
+        return Err(AppError::BadRequest(
+            "agent URL must start with http:// or https://".into(),
+        ));
+    }
+
+    let id = db::servers::create(
+        &state.db,
+        db::servers::NewServer {
+            name,
+            agent_url: form.agent_url.trim(),
+            agent_token: form.agent_token.trim(),
+            hostname: form.hostname.trim(),
+            ip_address: form.ip_address.trim(),
+            provider: Some(form.provider.trim()).filter(|s| !s.is_empty()),
+            region: Some(form.region.trim()).filter(|s| !s.is_empty()),
+        },
+    )
+    .await?;
+
+    db::audit::record(
+        &state.db,
+        &user.0.email,
+        "server.create",
+        name,
+        Some(&form.agent_url),
+        true,
+    )
+    .await?;
+
+    // Probe the agent immediately so the operator gets feedback now rather than
+    // at the next heartbeat.
+    let flash = match state.agent.ping(form.agent_url.trim(), form.agent_token.trim()).await {
+        Ok(result) => {
+            let version = match &result.data {
+                wp_common::protocol::OperationData::Pong { agent_version, .. } => {
+                    Some(agent_version.clone())
+                }
+                _ => None,
+            };
+            db::servers::record_heartbeat(
+                &state.db,
+                id,
+                ServerStatus::Online,
+                version.as_deref(),
+                None,
+            )
+            .await?;
+            "Server attached and the agent answered.".to_string()
+        }
+        Err(error) => {
+            db::servers::record_heartbeat(&state.db, id, ServerStatus::Offline, None, None).await?;
+            format!("Server saved, but the agent did not answer: {error}")
+        }
+    };
+
+    Ok(redirect_with_flash(&format!("/servers/{id}"), &flash))
+}
+
+pub async fn delete(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<i64>,
+) -> AppResult<Response> {
+    let server = db::servers::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+    if server.site_count > 0 {
+        return Err(AppError::BadRequest(
+            "detach or delete the sites on this server first".into(),
+        ));
+    }
+
+    db::servers::delete(&state.db, id).await?;
+    db::audit::record(
+        &state.db,
+        &user.0.email,
+        "server.delete",
+        &server.server.name,
+        None,
+        true,
+    )
+    .await?;
+
+    Ok(redirect_with_flash("/servers", "Server detached."))
+}
+
+// ---------------------------------------------------------------------------
+// HTMX fragment: live metrics tiles
+// ---------------------------------------------------------------------------
+
+#[derive(Template)]
+#[template(path = "servers/metrics.html")]
+struct MetricsFragment {
+    server: db::servers::ServerRow,
+}
+
+pub async fn metrics_fragment(
+    State(state): State<AppState>,
+    _user: CurrentUser,
+    Path(id): Path<i64>,
+) -> AppResult<Response> {
+    let server = db::servers::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+    Ok(super::no_store(render(MetricsFragment { server })))
+}

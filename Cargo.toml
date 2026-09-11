@@ -1,0 +1,60 @@
+[workspace]
+resolver = "3"
+members = ["crates/common", "crates/panel", "crates/agent"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/wp-panel/wp-panel"
+rust-version = "1.85"
+
+[workspace.dependencies]
+wp-common = { path = "crates/common" }
+
+# async runtime
+tokio = { version = "1.53", features = ["rt-multi-thread", "macros", "signal", "fs", "process", "time", "sync", "io-util"] }
+
+# http
+axum = { version = "0.8", features = ["macros", "http2"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["fs", "compression-br", "compression-gzip", "trace", "set-header", "catch-panic", "request-id", "limit"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "gzip"] }
+
+# templating
+askama = "0.16"
+
+# persistence
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "tls-rustls-ring", "sqlite", "macros", "migrate", "chrono", "json"] }
+
+# serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.9"
+
+# errors / logging
+anyhow = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+# misc
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+rand = "0.9"
+argon2 = "0.5"
+base64 = "0.22"
+hmac = "0.12"
+sha2 = "0.10"
+clap = { version = "4", features = ["derive", "env"] }
+humantime = "2"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
+
+[profile.dev]
+debug = 1

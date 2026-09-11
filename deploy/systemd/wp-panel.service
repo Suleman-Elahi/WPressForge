@@ -1,0 +1,37 @@
+[Unit]
+Description=WP Panel control plane
+Documentation=https://github.com/wp-panel/wp-panel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=wp-panel
+Group=wp-panel
+WorkingDirectory=/opt/wp-panel
+ExecStart=/opt/wp-panel/wp-panel
+Restart=on-failure
+RestartSec=2
+
+# Configuration lives here; see .env.example.
+EnvironmentFile=/etc/wp-panel/panel.env
+
+# The panel holds no privileges: it only talks to agents over HTTP.
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ReadWritePaths=/var/lib/wp-panel
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+
+[Install]
+WantedBy=multi-user.target

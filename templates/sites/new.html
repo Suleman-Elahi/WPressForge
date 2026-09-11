@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1>New site</h1>
+    <p>One job provisions the user, filesystem, database, PHP container, Nginx vhost, TLS and WordPress.</p>
+  </div>
+</div>
+
+{% if servers.is_empty() %}
+<section class="card">
+  <div class="empty">
+    <h3>Attach a server first</h3>
+    <p>Sites live on a server running <code>wp-agent</code>.</p>
+    <a class="btn primary" href="/servers/new">Attach server</a>
+  </div>
+</section>
+{% else %}
+<form method="post" action="/sites" class="grid two" style="align-items:start">
+  <section class="card">
+    <div class="card-head"><h2>Site</h2></div>
+    <div class="card-body">
+      <div class="field">
+        <label for="domain">Primary domain</label>
+        <input id="domain" name="domain" type="text" required placeholder="example.com"
+               autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="url">
+        <span class="hint">Point an A record at the server before requesting a certificate.</span>
+      </div>
+
+      <div class="field">
+        <label for="title">Site title</label>
+        <input id="title" name="title" type="text" placeholder="Example Shop">
+      </div>
+
+      <div class="field">
+        <label for="server_id">Server</label>
+        <select id="server_id" name="server_id" required>
+          {% for row in servers %}
+          <option value="{{ row.server.id }}">{{ row.server.name }} — {{ row.server.location_label() }} ({{ row.site_count }} sites)</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="php_version">PHP version</label>
+        <select id="php_version" name="php_version">
+          {% for version in php_versions %}
+          <option value="{{ version }}" {% if version.as_str() == "8.4" %}selected{% endif %}>PHP {{ version }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>Resources & isolation</h2></div>
+    <div class="card-body">
+      <div class="field-row">
+        <div class="field">
+          <label for="cpu_cores">CPU limit</label>
+          <input id="cpu_cores" name="cpu_cores" type="number" step="0.25" min="0.25" max="32" value="1">
+          <span class="hint">vCPU</span>
+        </div>
+        <div class="field">
+          <label for="memory_mb">Memory limit</label>
+          <input id="memory_mb" name="memory_mb" type="number" step="128" min="256" max="65536" value="1024">
+          <span class="hint">MB</span>
+        </div>
+        <div class="field">
+          <label for="php_workers">PHP workers</label>
+          <input id="php_workers" name="php_workers" type="number" min="2" max="128" value="8">
+          <span class="hint">FPM children</span>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Database</label>
+        <div class="radio-cards">
+          <label>
+            <input type="radio" name="database_mode" value="shared" checked>
+            <span>Shared server<small>One schema and user on the host MariaDB. Efficient default.</small></span>
+          </label>
+          <label>
+            <input type="radio" name="database_mode" value="dedicated">
+            <span>Dedicated container<small>Own MariaDB container. Stronger isolation, more RAM.</small></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Provisioning</label>
+        <div class="gap" style="gap:.5rem">
+          <label class="check">
+            <input type="checkbox" name="install_wordpress" checked>
+            <span>Install WordPress<small>Latest core via WP-CLI, admin credentials generated.</small></span>
+          </label>
+          <label class="check">
+            <input type="checkbox" name="request_ssl" checked>
+            <span>Request Let's Encrypt certificate<small>Skipped automatically if DNS does not resolve yet.</small></span>
+          </label>
+          <label class="check">
+            <input type="checkbox" name="fastcgi_cache" checked>
+            <span>Enable FastCGI cache<small>WordPress-aware bypass rules for admin, login and carts.</small></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="btn-row">
+        <button class="btn primary" type="submit">Create site</button>
+        <a class="btn ghost" href="/sites">Cancel</a>
+      </div>
+    </div>
+  </section>
+</form>
+{% endif %}
+
+{% endblock %}

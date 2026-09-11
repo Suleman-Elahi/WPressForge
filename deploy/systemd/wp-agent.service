@@ -1,0 +1,26 @@
+[Unit]
+Description=WP Panel node agent
+Documentation=https://github.com/wp-panel/wp-panel
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+# The agent manages users, containers, Nginx and MariaDB, so it runs as root.
+# Its only external interface is the token-authenticated operations API.
+User=root
+ExecStart=/usr/local/bin/wp-agent
+Restart=on-failure
+RestartSec=2
+
+EnvironmentFile=/etc/wp-panel/agent.env
+
+NoNewPrivileges=no
+ProtectHome=read-only
+ProtectKernelModules=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

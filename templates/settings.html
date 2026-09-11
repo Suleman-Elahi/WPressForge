@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1>Settings</h1>
+    <p>Panel configuration comes from flags and environment variables.</p>
+  </div>
+</div>
+
+<div class="grid two">
+  <section class="card">
+    <div class="card-head"><h2>Panel</h2></div>
+    <div class="card-body">
+      <dl class="kv">
+        <dt>Version</dt><dd>{{ version }}</dd>
+        <dt>Uptime</dt><dd>{{ uptime }}</dd>
+        <dt>Database</dt><dd class="mono">{{ database }}</dd>
+        <dt>Job workers</dt><dd>{{ workers }}</dd>
+        <dt>Demo data</dt><dd>{% if demo_data %}enabled{% else %}disabled{% endif %}</dd>
+      </dl>
+      {% if demo_data %}
+      <div class="banner warn mt">
+        Demo mode: jobs targeting the example server run through a simulated step plan.
+        Start with <code>--demo-data false</code> for production.
+      </div>
+      {% endif %}
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>Account</h2></div>
+    <div class="card-body">
+      <dl class="kv">
+        <dt>Signed in as</dt><dd>{{ email }}</dd>
+        <dt>Role</dt><dd>{{ role }}</dd>
+        <dt>Member since</dt><dd>{{ member_since }}</dd>
+        <dt>Previous login</dt><dd>{{ last_login }}</dd>
+        <dt>Sessions</dt><dd>cookie based, 14 day lifetime</dd>
+        <dt>2FA</dt><dd class="muted">planned</dd>
+        <dt>API tokens</dt><dd class="muted">planned</dd>
+      </dl>
+      <form method="post" action="/logout" class="mt">
+        <button class="btn" type="submit">Sign out</button>
+      </form>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>Backup destinations</h2></div>
+    <div class="card-body">
+      <p class="muted">Restic repositories on S3, R2, B2, Wasabi or MinIO. Configured per panel and
+        selected per site, with hourly/daily/weekly/monthly retention.</p>
+      <button class="btn" disabled>Add destination</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>Environment</h2></div>
+    <div class="card-body">
+      <pre class="log">WP_PANEL_BIND=127.0.0.1:8080
+WP_PANEL_DB=data/panel.db
+WP_PANEL_WORKERS={{ workers }}
+WP_PANEL_SECURE_COOKIES=true
+WP_PANEL_DEMO_DATA=false
+WP_PANEL_LOG=info</pre>
+    </div>
+  </section>
+</div>
+
+{% endblock %}

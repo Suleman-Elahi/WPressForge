@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1>Job #{{ job.job.id }}</h1>
+    <p>
+      {{ job.job.kind.label() }}
+      {% if let Some(domain) = job.site_domain %} · <a href="/sites/{{ job.job.site_id.unwrap_or(0) }}">{{ domain }}</a>{% endif %}
+      {% if let Some(name) = job.server_name %} · {{ name }}{% endif %}
+      · triggered by {{ job.actor }} {{ job.job.created_label() }}
+    </p>
+  </div>
+  <div class="spacer"></div>
+  <a class="btn ghost" href="/jobs">All jobs</a>
+</div>
+
+{% include "jobs/progress.html" %}
+
+{% endblock %}

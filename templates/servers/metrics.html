@@ -1,0 +1,25 @@
+{# HTMX fragment: metric tiles, refreshed every 10s. #}
+<div class="grid stats">
+  <div class="stat">
+    <div class="label">CPU</div>
+    <div class="value">{{ server.metrics.cpu_label() }}</div>
+    <div class="meter {{ server.metrics.cpu_tone() }}"><span style="width:{{ server.metrics.cpu_label() }}"></span></div>
+  </div>
+  <div class="stat">
+    <div class="label">Memory</div>
+    <div class="value">{{ server.metrics.memory_label() }}</div>
+    <div class="meter {{ server.metrics.memory_tone() }}"><span style="width:{{ server.metrics.memory_label() }}"></span></div>
+    <div class="sub">{{ server.metrics.memory_total_label() }} total</div>
+  </div>
+  <div class="stat">
+    <div class="label">Disk</div>
+    <div class="value">{{ server.metrics.disk_label() }}</div>
+    <div class="meter {{ server.metrics.disk_tone() }}"><span style="width:{{ server.metrics.disk_label() }}"></span></div>
+    <div class="sub">{{ server.metrics.disk_total_label() }} total</div>
+  </div>
+  <div class="stat">
+    <div class="label">Load</div>
+    <div class="value">{{ server.metrics.load_label() }}</div>
+    <div class="sub">{{ server.metrics.containers }} containers · {{ server.site_count }} sites</div>
+  </div>
+</div>

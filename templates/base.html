@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>{{ chrome.title }} · WP Panel</title>
+<link rel="stylesheet" href="/static/css/app.css">
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<script src="/static/vendor/htmx.min.js" defer></script>
+<script src="/static/js/app.js" defer></script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+
+<div class="app">
+  {% include "partials/sidebar.html" %}
+
+  <div class="content">
+    <header class="topbar">
+      <button class="btn ghost nav-toggle" data-nav-toggle aria-label="Open navigation">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+      </button>
+      <h1>{{ chrome.title }}</h1>
+      <div class="topbar-actions">
+        <span hx-get="/partials/jobs/active" hx-trigger="load, every 3s" hx-swap="innerHTML"></span>
+        <button class="btn ghost" data-theme-toggle aria-label="Toggle colour theme" title="Toggle theme">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="17" height="17"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/></svg>
+        </button>
+        <span class="avatar" title="{{ chrome.user_name }}">{{ chrome.user_initials }}</span>
+      </div>
+    </header>
+
+    <main id="main" class="page">
+      {% if let Some(flash) = chrome.flash %}
+      <div class="flash" data-flash role="status">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M20 6L9 17l-5-5"/></svg>
+        <span>{{ flash }}</span>
+      </div>
+      {% endif %}
+
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+</div>
+</body>
+</html>

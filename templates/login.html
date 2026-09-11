@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>Sign in · WP Panel</title>
+<link rel="stylesheet" href="/static/css/app.css">
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<script src="/static/js/app.js" defer></script>
+</head>
+<body>
+<main class="auth">
+  <div class="auth-card">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">WP</span>
+      <span>WP Panel<small>control plane</small></span>
+    </div>
+
+    {% if let Some(error) = error %}
+    <div class="banner warn mb" role="alert">{{ error }}</div>
+    {% endif %}
+
+    <form method="post" action="/login">
+      <div class="field">
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" value="{{ email }}" required autofocus
+               autocomplete="username" autocapitalize="off" spellcheck="false">
+      </div>
+      <div class="field">
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" required autocomplete="current-password">
+      </div>
+      <button class="btn primary" type="submit" style="width:100%">Sign in</button>
+    </form>
+
+    <p class="muted mt" style="font-size:.8rem">
+      First run? The initial password is printed once in the panel log.
+    </p>
+  </div>
+</main>
+</body>
+</html>

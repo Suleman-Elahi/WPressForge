@@ -1,0 +1,14 @@
+{# HTMX fragment in the top bar: compact live indicator for running jobs. #}
+{% if jobs.is_empty() %}
+<span class="visually-hidden">No active jobs</span>
+{% else %}
+{% for row in jobs %}
+{% if loop.first %}
+<a class="pill info" href="/jobs/{{ row.job.id }}" title="{{ row.job.message }}">
+  <span class="dot pulse"></span>
+  {{ row.job.kind.label() }} {{ row.job.progress_percent() }}%
+  {% if jobs.len() > 1 %}<span class="muted">+{{ jobs.len() - 1 }}</span>{% endif %}
+</a>
+{% endif %}
+{% endfor %}
+{% endif %}

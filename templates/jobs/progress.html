@@ -1,0 +1,48 @@
+{# HTMX fragment: job progress + step timeline. Polling stops on its own once
+   the job reaches a terminal state (no hx-trigger is emitted). #}
+<div id="job-progress"
+     {% if job.job.is_active() %}hx-get="/partials/jobs/{{ job.job.id }}" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
+
+  <div class="card">
+    <div class="card-head">
+      <h2>{{ job.job.kind.label() }}</h2>
+      <span class="pill {{ job.job.status.tone() }}"><span class="dot {% if job.job.is_active() %}pulse{% endif %}"></span>{{ job.job.status }}</span>
+      <div class="spacer"></div>
+      <span class="muted">{{ job.duration() }}</span>
+    </div>
+    <div class="card-body">
+      <div class="flex mb">
+        <span class="progress-big" style="flex:1"><span style="width:{{ job.job.progress_percent() }}%"></span></span>
+        <b style="font-variant-numeric:tabular-nums">{{ job.job.progress_percent() }}%</b>
+      </div>
+      <p class="dim">{{ job.job.message }}</p>
+      {% if let Some(error) = job.job.error %}
+      <div class="banner warn mt"><strong>Error</strong><span>{{ error }}</span></div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card mt">
+    <div class="card-head"><h3>Steps</h3></div>
+    <div class="card-body">
+      <ul class="steps">
+        {% for step in steps %}
+        <li>
+          <span class="marker {% if !step.ok %}bad{% endif %}">{% if step.ok %}✓{% else %}!{% endif %}</span>
+          <span class="name">{{ step.name }}</span>
+          <span class="time">{{ step.duration_label() }}</span>
+        </li>
+        {% endfor %}
+        {% for name in plan %}
+        {% if loop.index0 >= steps.len() %}
+        <li class="pending">
+          <span class="marker {% if loop.index0 == steps.len() && job.job.is_active() %}running{% endif %}"></span>
+          <span class="name">{{ name }}</span>
+          <span class="time">pending</span>
+        </li>
+        {% endif %}
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1 class="flex flex-wrap">
+      {{ server.server.name }}
+      <span class="pill {{ server.server.status.tone() }}"><span class="dot"></span>{{ server.server.status }}</span>
+    </h1>
+    <p>{{ server.server.hostname }} · {{ server.server.location_label() }} · agent {{ server.server.agent_version.as_deref().unwrap_or("unknown") }}</p>
+  </div>
+  <div class="spacer"></div>
+  <div class="btn-row">
+    <a class="btn" href="/sites/new">New site here</a>
+    <form class="inline-form" method="post" action="/servers/{{ server.server.id }}/delete"
+          data-confirm="Detach {{ server.server.name }} from the panel?">
+      <button class="btn danger" type="submit">Detach</button>
+    </form>
+  </div>
+</div>
+
+<div hx-get="/partials/servers/{{ server.server.id }}/metrics" hx-trigger="load, every 10s" hx-swap="innerHTML">
+  {% include "servers/metrics.html" %}
+</div>
+
+<div class="grid two">
+  <section class="card">
+    <div class="card-head"><h2>Connection</h2></div>
+    <div class="card-body">
+      <dl class="kv">
+        <dt>Agent URL</dt><dd class="mono">{{ server.server.agent_url }}</dd>
+        <dt>IP address</dt><dd class="mono">{{ server.server.ip_address }}</dd>
+        <dt>Hostname</dt><dd class="mono">{{ server.server.hostname }}</dd>
+        <dt>Last seen</dt><dd>{{ server.server.last_seen_label() }}</dd>
+        <dt>Attached</dt><dd>{{ server.server.created_label() }}</dd>
+      </dl>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>Services</h2></div>
+    <div class="card-body">
+      {% if server.metrics.services.is_empty() %}
+      <p class="muted">The agent reports service health with each heartbeat.</p>
+      {% else %}
+      <ul class="steps">
+        {% for service in server.metrics.services %}
+        <li>
+          <span class="marker {% if !service.healthy %}bad{% endif %}">{% if service.healthy %}✓{% else %}!{% endif %}</span>
+          <span class="name">{{ service.name }}</span>
+          <span class="time">{{ service.detail.as_deref().unwrap_or("") }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+
+      {% if !server.metrics.php_versions.is_empty() %}
+      <h3 class="mt">PHP versions in use</h3>
+      <dl class="kv">
+        {% for usage in server.metrics.php_versions %}
+        <dt>PHP {{ usage.version }}</dt><dd>{{ usage.sites }} sites</dd>
+        {% endfor %}
+      </dl>
+      {% endif %}
+    </div>
+  </section>
+</div>
+
+<section class="card">
+  <div class="card-head">
+    <h2>Sites on this server</h2>
+    <div class="spacer"></div>
+    <span class="muted">{{ sites.len() }}</span>
+  </div>
+  {% if sites.is_empty() %}
+  <div class="empty">
+    <h3>No sites here yet</h3>
+    <a class="btn primary" href="/sites/new">Create a site</a>
+  </div>
+  {% else %}
+  <div class="table-wrap">
+    <table class="data stack">
+      <thead><tr><th>Site</th><th>Status</th><th>PHP</th><th>Resources</th><th>Disk</th><th></th></tr></thead>
+      <tbody>
+      {% for row in sites %}
+        <tr>
+          <td data-label="Site"><strong><a href="/sites/{{ row.site.id }}">{{ row.site.domain }}</a></strong></td>
+          <td data-label="Status"><span class="pill {{ row.site.status.tone() }}"><span class="dot"></span>{{ row.site.status }}</span></td>
+          <td data-label="PHP"><span class="tag">{{ row.site.php_version }}</span></td>
+          <td data-label="Resources" class="nowrap">{{ row.site.cpu_label() }} · {{ row.site.memory_label() }}</td>
+          <td data-label="Disk" class="nowrap">{{ row.site.disk_label() }}</td>
+          <td class="actions"><a class="btn sm" href="/sites/{{ row.site.id }}">Manage</a></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</section>
+
+<section class="card">
+  <div class="card-head">
+    <h2>Recent jobs</h2>
+    <div class="spacer"></div>
+    <a class="btn sm ghost" href="/jobs">All jobs</a>
+  </div>
+  <div class="table-wrap">
+    <table class="data stack">
+      <thead><tr><th>Job</th><th>Target</th><th>Status</th><th class="right">When</th></tr></thead>
+      <tbody>
+      {% for row in jobs %}
+        <tr>
+          <td data-label="Job"><a href="/jobs/{{ row.job.id }}">{{ row.job.kind.label() }}</a></td>
+          <td data-label="Target">{% if let Some(domain) = row.site_domain %}{{ domain }}{% else %}—{% endif %}</td>
+          <td data-label="Status"><span class="pill {{ row.job.status.tone() }}"><span class="dot"></span>{{ row.job.status }}</span></td>
+          <td data-label="When" class="right nowrap">{{ row.job.created_label() }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+{% endblock %}

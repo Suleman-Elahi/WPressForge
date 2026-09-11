@@ -1,0 +1,373 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1 class="flex flex-wrap">
+      {{ site.site.domain }}
+      {% if site.site.is_staging() %}<span class="pill info">staging</span>{% endif %}
+    </h1>
+    <p>
+      {{ site.site.display_title() }} ·
+      <a href="{{ site.site.url() }}" target="_blank" rel="noreferrer noopener">visit site</a> ·
+      on <a href="/servers/{{ site.site.server_id }}">{{ site.server_name }}</a>
+    </p>
+  </div>
+  <div class="spacer"></div>
+  <div class="btn-row">
+    <form class="inline-form" method="post" action="/sites/{{ site.site.id }}/actions/clear-cache">
+      <button class="btn sm" type="submit">Clear cache</button>
+    </form>
+    <form class="inline-form" method="post" action="/sites/{{ site.site.id }}/actions/backup">
+      <button class="btn sm" type="submit">Back up</button>
+    </form>
+    {% if site.site.is_running() %}
+    <form class="inline-form" method="post" action="/sites/{{ site.site.id }}/actions/restart">
+      <button class="btn sm" type="submit">Restart</button>
+    </form>
+    <form class="inline-form" method="post" action="/sites/{{ site.site.id }}/actions/stop">
+      <button class="btn sm" type="submit">Stop</button>
+    </form>
+    {% else %}
+    <form class="inline-form" method="post" action="/sites/{{ site.site.id }}/actions/start">
+      <button class="btn sm primary" type="submit">Start</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+
+<div hx-get="/partials/sites/{{ site.site.id }}/status" hx-trigger="load, every 5s" hx-swap="innerHTML">
+  <div class="banner"><span class="pill {{ site.site.status.tone() }}"><span class="dot"></span>{{ site.site.status }}</span></div>
+</div>
+
+<nav class="tabs" aria-label="Site sections">
+  {% for entry in tabs %}
+  <a href="/sites/{{ site.site.id }}?tab={{ entry.0 }}" {% if tab == entry.0 %}aria-current="page"{% endif %}>{{ entry.1 }}</a>
+  {% endfor %}
+</nav>
+
+{% if tab == "overview" %}
+<div class="grid stats">
+  <div class="stat"><div class="label">PHP</div><div class="value">{{ site.site.php_version }}</div><div class="sub">{{ site.site.cpu_label() }} · {{ site.site.memory_label() }}</div></div>
+  <div class="stat"><div class="label">WordPress</div><div class="value">{{ site.site.wp_label() }}</div><div class="sub">core version</div></div>
+  <div class="stat"><div class="label">Disk</div><div class="value">{{ site.site.disk_label() }}</div><div class="sub">files + database</div></div>
+  <div class="stat"><div class="label">Cache</div><div class="value">{{ site.site.cache_label() }}</div><div class="sub">TTL {{ site.site.cache_ttl_label() }}</div></div>
+</div>
+
+<div class="grid two">
+  <section class="card">
+    <div class="card-head"><h2>Configuration</h2></div>
+    <div class="card-body">
+      <dl class="kv">
+        <dt>Status</dt><dd><span class="pill {{ site.site.status.tone() }}"><span class="dot"></span>{{ site.site.status }}</span></dd>
+        <dt>Environment</dt><dd>{{ site.site.environment.as_str() }}</dd>
+        <dt>Document root</dt><dd class="mono">{{ site.site.root_path() }}/public_html</dd>
+        <dt>System user</dt><dd class="mono">uid {{ site.site.uid }}</dd>
+        <dt>Container</dt><dd class="mono">{{ site.site.container_name() }}</dd>
+        <dt>Database</dt><dd>{{ site.site.database_mode.label() }} · <span class="mono">{{ site.site.db_name() }}</span></dd>
+        <dt>TLS</dt><dd><span class="pill {{ site.site.ssl_tone() }}">{{ site.site.ssl_label() }}</span></dd>
+        <dt>Created</dt><dd>{{ site.site.created_label() }}</dd>
+      </dl>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>Recent jobs</h2>
+      <div class="spacer"></div>
+      <a class="btn sm ghost" href="/jobs">All jobs</a>
+    </div>
+    {% if jobs.is_empty() %}
+    <div class="empty"><p>No jobs for this site yet.</p></div>
+    {% else %}
+    <div class="table-wrap">
+      <table class="data stack">
+        <thead><tr><th>Job</th><th>Status</th><th class="right">When</th></tr></thead>
+        <tbody>
+        {% for row in jobs %}
+          <tr>
+            <td data-label="Job"><a href="/jobs/{{ row.job.id }}">{{ row.job.kind.label() }}</a></td>
+            <td data-label="Status"><span class="pill {{ row.job.status.tone() }}"><span class="dot {% if row.job.is_active() %}pulse{% endif %}"></span>{{ row.job.status }}</span></td>
+            <td data-label="When" class="right nowrap">{{ row.job.created_label() }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </section>
+</div>
+
+{% else if tab == "domains" %}
+<div class="grid two">
+  <section class="card">
+    <div class="card-head"><h2>Domains</h2></div>
+    <div class="table-wrap">
+      <table class="data stack">
+        <thead><tr><th>Domain</th><th>Role</th><th>DNS</th><th></th></tr></thead>
+        <tbody>
+        {% for domain in domains %}
+          <tr>
+            <td data-label="Domain"><strong>{{ domain.name }}</strong></td>
+            <td data-label="Role">{% if domain.primary %}primary{% else %}alias{% endif %}</td>
+            <td data-label="DNS"><span class="pill {{ domain.dns_tone() }}">{{ domain.dns_label() }}</span></td>
+            <td class="actions">
+              {% if !domain.primary %}
+              <form class="inline-form" method="post" action="/sites/{{ site.site.id }}/domains/remove"
+                    data-confirm="Remove {{ domain.name }} from this site?">
+                <input type="hidden" name="domain" value="{{ domain.name }}">
+                <button class="btn sm danger" type="submit">Remove</button>
+              </form>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>Add domain</h2></div>
+    <div class="card-body">
+      <form method="post" action="/sites/{{ site.site.id }}/domains">
+        <div class="field">
+          <label for="new-domain">Domain or subdomain</label>
+          <input id="new-domain" name="domain" type="text" required placeholder="shop.example.com"
+                 autocomplete="off" spellcheck="false">
+          <span class="hint">Aliases are added to the same Nginx vhost and certificate.</span>
+        </div>
+        <button class="btn primary" type="submit">Add domain</button>
+      </form>
+    </div>
+  </section>
+</div>
+
+{% else if tab == "wordpress" %}
+<div class="grid two">
+  <section class="card">
+    <div class="card-head"><h2>WordPress</h2></div>
+    <div class="card-body">
+      <dl class="kv">
+        <dt>Core</dt><dd>{{ site.site.wp_label() }}</dd>
+        <dt>URL</dt><dd><a href="{{ site.site.url() }}" target="_blank" rel="noreferrer noopener">{{ site.site.url() }}</a></dd>
+        <dt>Admin</dt><dd><a href="{{ site.site.url() }}/wp-admin" target="_blank" rel="noreferrer noopener">wp-admin</a></dd>
+      </dl>
+      <div class="btn-row mt">
+        <form class="inline-form" method="post" action="/sites/{{ site.site.id }}/actions/update-wordpress">
+          <button class="btn primary" type="submit">Update core</button>
+        </form>
+        <form class="inline-form" method="post" action="/sites/{{ site.site.id }}/actions/clear-cache">
+          <button class="btn" type="submit">Flush caches</button>
+        </form>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>WP-CLI</h2></div>
+    <div class="card-body">
+      <p class="muted">The agent runs WP-CLI inside the site container as the site user. Plugin, theme
+        and cron management arrive with the WordPress milestone.</p>
+      <pre class="log">$ wp core version
+{{ site.site.wp_label() }}
+
+$ wp plugin list --status=active
+(pending: WordPress management milestone)</pre>
+    </div>
+  </section>
+</div>
+
+{% else if tab == "php" %}
+<div class="grid two">
+  <section class="card">
+    <div class="card-head"><h2>PHP version</h2></div>
+    <div class="card-body">
+      <p class="muted">Switching starts a container on the new version, health-checks it, moves the
+        Nginx upstream and only then removes the old one.</p>
+      <form method="post" action="/sites/{{ site.site.id }}/php">
+        <div class="field">
+          <label for="php">Target version</label>
+          <select id="php" name="php_version">
+            {% for version in php_versions %}
+            {% let current = version.as_str() == site.site.php_version.as_str() %}
+            <option value="{{ version }}" {% if current %}selected{% endif %}>
+              PHP {{ version }}{% if current %} (current){% endif %}
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+        <button class="btn primary" type="submit">Switch PHP</button>
+      </form>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>Resource limits</h2></div>
+    <div class="card-body">
+      <form method="post" action="/sites/{{ site.site.id }}/limits">
+        <div class="field-row">
+          <div class="field">
+            <label for="cpu">CPU</label>
+            <input id="cpu" name="cpu_cores" type="number" step="0.25" min="0.25" max="32" value="{{ site.site.limits.cpu_cores }}">
+          </div>
+          <div class="field">
+            <label for="mem">Memory (MB)</label>
+            <input id="mem" name="memory_mb" type="number" step="128" min="256" max="65536" value="{{ site.site.limits.memory_mb }}">
+          </div>
+          <div class="field">
+            <label for="workers">PHP workers</label>
+            <input id="workers" name="php_workers" type="number" min="2" max="128" value="{{ site.site.limits.php_workers }}">
+          </div>
+        </div>
+        <button class="btn primary" type="submit">Save limits</button>
+      </form>
+    </div>
+  </section>
+</div>
+
+{% else if tab == "database" %}
+<section class="card">
+  <div class="card-head"><h2>Database</h2></div>
+  <div class="card-body">
+    <dl class="kv">
+      <dt>Mode</dt><dd>{{ site.site.database_mode.label() }}</dd>
+      <dt>Name</dt><dd class="mono">{{ site.site.db_name() }}</dd>
+      <dt>User</dt><dd class="mono">{{ site.site.db_name() }}</dd>
+      <dt>Host</dt><dd class="mono">{% if site.site.database_mode.as_str() == "dedicated" %}{{ site.site.container_name() }}-db{% else %}127.0.0.1:3306{% endif %}</dd>
+      <dt>Credentials</dt><dd class="muted">stored on the node, never in the panel database</dd>
+    </dl>
+    <p class="muted mt">Exports, search/replace and adminer-style browsing land with the database milestone.</p>
+  </div>
+</section>
+
+{% else if tab == "ssl" %}
+<div class="grid two">
+  <section class="card">
+    <div class="card-head"><h2>Certificate</h2></div>
+    <div class="card-body">
+      <dl class="kv">
+        <dt>Status</dt><dd><span class="pill {{ site.site.ssl_tone() }}">{{ site.site.ssl_label() }}</span></dd>
+        <dt>Issuer</dt><dd>{{ site.site.ssl.issuer.as_str() }}</dd>
+        <dt>Auto renew</dt><dd>{% if site.site.ssl.auto_renew %}enabled{% else %}disabled{% endif %}</dd>
+      </dl>
+      <div class="btn-row mt">
+        <form class="inline-form" method="post" action="/sites/{{ site.site.id }}/actions/issue-ssl">
+          <button class="btn primary" type="submit">Issue certificate</button>
+        </form>
+        <form class="inline-form" method="post" action="/sites/{{ site.site.id }}/actions/renew-ssl">
+          <button class="btn" type="submit">Renew now</button>
+        </form>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>Covered domains</h2></div>
+    <div class="card-body">
+      <ul class="steps">
+        {% for domain in domains %}
+        <li><span class="marker {{ domain.dns_tone() }}">✓</span><span class="name">{{ domain.name }}</span><span class="time">{{ domain.dns_label() }}</span></li>
+        {% endfor %}
+      </ul>
+    </div>
+  </section>
+</div>
+
+{% else if tab == "backups" %}
+<section class="card">
+  <div class="card-head">
+    <h2>Backups</h2>
+    <div class="spacer"></div>
+    <form class="inline-form" method="post" action="/sites/{{ site.site.id }}/actions/backup">
+      <button class="btn sm primary" type="submit">Back up now</button>
+    </form>
+  </div>
+  {% if backups.is_empty() %}
+  <div class="empty">
+    <h3>No backups yet</h3>
+    <p>Restic snapshots are encrypted and deduplicated, files and database together.</p>
+  </div>
+  {% else %}
+  <div class="table-wrap">
+    <table class="data stack">
+      <thead><tr><th>Snapshot</th><th>Scope</th><th>Size</th><th>Destination</th><th>Created</th><th></th></tr></thead>
+      <tbody>
+      {% for backup in backups %}
+        <tr>
+          <td data-label="Snapshot" class="mono">{{ backup.snapshot_id }}</td>
+          <td data-label="Scope">{{ backup.scope_label() }}</td>
+          <td data-label="Size" class="nowrap">{{ backup.size_label() }}</td>
+          <td data-label="Destination">{{ backup.destination }}</td>
+          <td data-label="Created" class="nowrap" title="{{ backup.timestamp_label() }}">{{ backup.created_label() }}</td>
+          <td class="actions"><button class="btn sm" disabled title="Restore lands with the backup milestone">Restore</button></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</section>
+
+{% else if tab == "logs" %}
+<section class="card">
+  <div class="card-head"><h2>Logs</h2></div>
+  <div class="card-body">
+    <p class="muted">Log streaming is served by the agent over the same authenticated channel.
+      Paths on the node:</p>
+    <pre class="log">{{ site.site.root_path() }}/logs/nginx-access.log
+{{ site.site.root_path() }}/logs/nginx-error.log
+{{ site.site.root_path() }}/logs/php-error.log
+{{ site.site.root_path() }}/logs/php-slow.log
+{{ site.site.root_path() }}/logs/wp-debug.log</pre>
+  </div>
+</section>
+
+{% else %}
+<div class="grid two">
+  <section class="card">
+    <div class="card-head"><h2>Caching</h2></div>
+    <div class="card-body">
+      <form method="post" action="/sites/{{ site.site.id }}/cache">
+        <div class="gap" style="gap:.5rem">
+          <label class="check">
+            <input type="checkbox" name="fastcgi_cache" {% if site.site.cache.fastcgi_cache %}checked{% endif %}>
+            <span>Nginx FastCGI cache<small>Bypassed for wp-admin, logged-in users, carts and POSTs.</small></span>
+          </label>
+          <label class="check">
+            <input type="checkbox" name="opcache" {% if site.site.cache.opcache %}checked{% endif %}>
+            <span>OPcache<small>Compiled PHP kept in shared memory.</small></span>
+          </label>
+          <label class="check">
+            <input type="checkbox" name="redis_object_cache" {% if site.site.cache.redis_object_cache %}checked{% endif %}>
+            <span>Redis object cache<small>Per-site Redis database plus the WordPress drop-in.</small></span>
+          </label>
+          <label class="check">
+            <input type="checkbox" name="brotli" {% if site.site.cache.brotli %}checked{% endif %}>
+            <span>Brotli compression<small>Static assets pre-compressed at the edge.</small></span>
+          </label>
+        </div>
+        <div class="field mt">
+          <label for="ttl">Cache lifetime (seconds)</label>
+          <input id="ttl" name="ttl_seconds" type="number" min="30" max="2592000" value="{{ site.site.cache.ttl_seconds }}">
+        </div>
+        <button class="btn primary" type="submit">Save caching</button>
+      </form>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>Danger zone</h2></div>
+    <div class="card-body">
+      <p class="muted">Deleting removes the container, database, files and system user on the node.
+        Backups are kept.</p>
+      <form method="post" action="/sites/{{ site.site.id }}/actions/delete"
+            data-confirm="Delete {{ site.site.domain }}? Files, database and container are removed.">
+        <button class="btn danger" type="submit">Delete site</button>
+      </form>
+    </div>
+  </section>
+</div>
+{% endif %}
+
+{% endblock %}

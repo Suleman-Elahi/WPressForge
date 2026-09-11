@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1>Attach server</h1>
+    <p>The panel never runs shell commands on a node: it sends typed operations to the agent.</p>
+  </div>
+</div>
+
+<div class="grid two" style="align-items:start">
+  <form class="card" method="post" action="/servers">
+    <div class="card-head"><h2>Agent connection</h2></div>
+    <div class="card-body">
+      <div class="field">
+        <label for="name">Name</label>
+        <input id="name" name="name" type="text" required placeholder="server-01" autocomplete="off">
+      </div>
+      <div class="field">
+        <label for="agent_url">Agent URL</label>
+        <input id="agent_url" name="agent_url" type="text" required placeholder="https://10.0.0.4:8443"
+               autocomplete="off" spellcheck="false">
+        <span class="hint">Reachable from the panel, ideally over a private network or VPN.</span>
+      </div>
+      <div class="field">
+        <label for="agent_token">Agent token</label>
+        <input id="agent_token" name="agent_token" type="text" required value="{{ suggested_token }}"
+               autocomplete="off" spellcheck="false">
+        <span class="hint">Install the agent with this token. It authenticates every operation.</span>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="ip_address">IP address</label>
+          <input id="ip_address" name="ip_address" type="text" placeholder="203.0.113.10" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="hostname">Hostname</label>
+          <input id="hostname" name="hostname" type="text" placeholder="server-01.example.net" autocomplete="off">
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="provider">Provider</label>
+          <input id="provider" name="provider" type="text" placeholder="Hetzner" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="region">Region</label>
+          <input id="region" name="region" type="text" placeholder="fsn1" autocomplete="off">
+        </div>
+      </div>
+      <div class="btn-row">
+        <button class="btn primary" type="submit">Attach server</button>
+        <a class="btn ghost" href="/servers">Cancel</a>
+      </div>
+    </div>
+  </form>
+
+  <section class="card">
+    <div class="card-head"><h2>Install the agent</h2></div>
+    <div class="card-body">
+      <p class="muted">On a clean Ubuntu 24.04 or Debian 12 host, as root:</p>
+      <pre class="log">curl -fsSL https://get.wp-panel.dev/agent.sh | \
+  WP_AGENT_TOKEN={{ suggested_token }} \
+  WP_AGENT_BIND=0.0.0.0:8443 sh</pre>
+      <p class="muted mt">The installer sets up Docker, Nginx, MariaDB, Restic and WP-CLI, then starts
+        <code>wp-agent</code> as a systemd service. Nothing else needs to be exposed publicly except
+        ports 80 and 443.</p>
+    </div>
+  </section>
+</div>
+
+{% endblock %}
