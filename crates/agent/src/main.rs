@@ -6,15 +6,18 @@
 //! strings supplied by the caller.
 
 mod api;
+mod capabilities;
 mod config;
 mod exec;
 mod ops;
 mod state;
 mod store;
+mod tls;
 
 use crate::config::Config;
 use crate::state::AgentState;
 use crate::store::Store;
+use anyhow::Context;
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
 
@@ -46,18 +49,42 @@ async fn main() -> anyhow::Result<()> {
     let store = Store::open(&config.state_file)
         .await
         .map_err(|e| anyhow::anyhow!("opening {}: {e}", config.state_file.display()))?;
-    let state = AgentState::new(config.clone(), store);
+    let state = AgentState::new(config.clone(), store).await;
 
-    let listener = tokio::net::TcpListener::bind(config.bind).await?;
+    // Load or generate TLS certificate.
+    let tls = tls::load_or_generate(
+        config.tls_cert.as_deref(),
+        config.tls_key.as_deref(),
+        &config.state_file.parent().unwrap_or(std::path::Path::new("/var/lib/wp-agent")),
+        &hostname(),
+        &local_ip(),
+    )?;
+
+    let rustls_config = axum_server::tls_rustls::RustlsConfig::from_pem(
+        tls.cert_pem.clone(),
+        tls.key_pem.clone(),
+    )
+    .await
+    .context("building rustls config from loaded certificate")?;
+
     tracing::info!(
         address = %config.bind,
         sites_root = %config.sites_root.display(),
-        "wp-agent listening"
+        fingerprint = %tls.fingerprint,
+        "wp-agent listening (TLS)"
     );
 
-    axum::serve(listener, api::router(state))
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    let server = axum_server::bind_rustls(config.bind, rustls_config);
+    let shutdown = shutdown_signal();
+
+    tokio::select! {
+        result = server.serve(api::router(state).into_make_service()) => {
+            result.context("axum-server")?;
+        }
+        _ = shutdown => {
+            tracing::info!("wp-agent shutting down");
+        }
+    }
 
     Ok(())
 }
@@ -85,4 +112,22 @@ async fn shutdown_signal() {
     }
 
     tracing::info!("wp-agent shutting down");
+}
+
+/// Returns the system hostname.
+fn hostname() -> String {
+    hostname::get()
+        .map(|h| h.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| "localhost".to_string())
+}
+
+/// Returns the first non-loopback IPv4 address, or 127.0.0.1.
+fn local_ip() -> String {
+    use std::net::UdpSocket;
+    UdpSocket::bind("0.0.0.0:0")
+        .and_then(|s| {
+            s.connect("8.8.8.8:80")?;
+            Ok(s.local_addr()?.ip().to_string())
+        })
+        .unwrap_or_else(|_| "127.0.0.1".to_string())
 }

@@ -9,6 +9,8 @@ pub struct User {
     pub name: String,
     pub password_hash: String,
     pub role: String,
+    pub totp_secret: Option<String>,
+    pub totp_confirmed_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub last_login_at: Option<DateTime<Utc>>,
 }
@@ -46,13 +48,19 @@ fn map(row: &sqlx::sqlite::SqliteRow) -> User {
         name: row.get("name"),
         password_hash: row.get("password_hash"),
         role: row.get("role"),
+        totp_secret: row.try_get("totp_secret").ok().flatten(),
+        totp_confirmed_at: row
+            .try_get::<Option<String>, _>("totp_confirmed_at")
+            .ok()
+            .flatten()
+            .map(|s| parse_ts(&s)),
         created_at: parse_ts(row.get::<String, _>("created_at").as_str()),
         last_login_at: parse_ts_opt(row.get("last_login_at")),
     }
 }
 
 const COLUMNS: &str =
-    "id, email, name, password_hash, role, created_at, last_login_at";
+    "id, email, name, password_hash, role, totp_secret, totp_confirmed_at, created_at, last_login_at";
 
 pub async fn count(db: &Db) -> sqlx::Result<i64> {
     sqlx::query_scalar("SELECT COUNT(*) FROM users").fetch_one(db).await

@@ -12,7 +12,8 @@ use crate::state::AppState;
 use chrono::{Duration as ChronoDuration, Utc};
 use std::time::{Duration, Instant};
 use wp_common::models::{
-    BackupScope, JobKind, JobStatus, PhpVersion, ServerStatus, SiteStatus, SslIssuer,
+    BackupScope, CronMode, JobKind, JobStatus, PhpVersion, ServerStatus, SiteStatus, SslIssuer,
+    WpItemAction,
 };
 use wp_common::protocol::{CreateSite, Operation, OperationData};
 use wp_common::Error as AgentError;
@@ -67,6 +68,13 @@ pub fn plan(kind: JobKind) -> &'static [&'static str] {
         JobKind::CacheClear => &["Purge FastCGI cache", "Flush object cache"],
         JobKind::StagingCreate => &["Create staging site", "Copy files", "Copy database", "Search & replace URLs", "Health check"],
         JobKind::StagingPush => &["Backup production", "Copy files", "Copy database", "Search & replace URLs", "Health check"],
+        // M2: WordPress management
+        JobKind::PluginAction => &["Run WP-CLI", "Verify site responds"],
+        JobKind::PluginUpdateAll => &["Backup", "Update plugins", "Verify site responds"],
+        JobKind::ThemeAction => &["Run WP-CLI", "Verify site responds"],
+        JobKind::WpUserPasswordReset => &["Generate password", "Apply"],
+        JobKind::CronRun => &["Run due events"],
+        JobKind::CronModeSet => &["Update wp-config", "Write system cron"],
     }
 }
 
@@ -131,10 +139,13 @@ async fn heartbeat_loop(state: AppState) {
                 continue; // Keep the example server visibly "online".
             }
 
-            let result = state
-                .agent
-                .metrics(&row.server.agent_url, &row.agent_token)
-                .await;
+            let conn = crate::agent::ServerConnection {
+                url: row.server.agent_url.clone(),
+                token: row.agent_token.clone(),
+                fingerprint: row.agent_fingerprint.clone(),
+            };
+
+            let result = state.agent.metrics(&conn).await;
 
             let (status, version, metrics) = match result {
                 Ok(result) => match result.data {
@@ -155,9 +166,55 @@ async fn heartbeat_loop(state: AppState) {
                 metrics.as_ref(),
             )
             .await;
+
+            // Store server metrics history.
+            if let Some(ref m) = metrics {
+                let _ = db::metrics::insert_server(
+                    &state.db,
+                    row.server.id,
+                    m.cpu_percent as f64,
+                    m.memory_percent as f64,
+                    m.disk_percent as f64,
+                    m.load_1m as f64,
+                    m.sites as i64,
+                )
+                .await;
+            }
+
+            // Collect per-site metrics for online servers.
+            if status == ServerStatus::Online {
+                let site_ids: Vec<i64> = db::sites::list_for_server(&state.db, row.server.id)
+                    .await
+                    .map(|rows| rows.into_iter().map(|r| r.site.id).collect())
+                    .unwrap_or_default();
+
+                if !site_ids.is_empty() {
+                    match state.agent.query(
+                        &conn,
+                        wp_common::protocol::Operation::GetSiteMetrics {
+                            site_ids: site_ids.clone(),
+                        },
+                    ).await {
+                        Ok(wp_common::protocol::OperationData::SiteMetrics(samples)) => {
+                            for sample in &samples {
+                                let _ = db::metrics::insert_site(&state.db, sample).await;
+                            }
+                        }
+                        Err(e) => {
+                            tracing::debug!(server = row.server.id, %e, "site metrics query failed");
+                        }
+                        _ => {}
+                    }
+                }
+            }
         }
 
+        // Retention: delete old history and downsample.
+        let _ = db::metrics::cleanup(&state.db, 30).await;
+        let _ = db::metrics::downsample(&state.db).await;
+
         let _ = db::users::purge_expired_sessions(&state.db).await;
+        let _ = crate::auth::prune_old_attempts(&state.db).await;
     }
 }
 
@@ -179,15 +236,18 @@ async fn run(state: &AppState, job: JobRow) -> anyhow::Result<()> {
         None => None,
     };
 
-    let operation = build_operation(&job, &payload);
+    let operation = build_operation(state, &job, &payload).await;
 
     let outcome = match (&server, &operation) {
         (Some(server), Some(operation)) if !is_demo(server) => {
             state
                 .agent
                 .send(
-                    &server.server.agent_url,
-                    &server.agent_token,
+                    &crate::agent::ServerConnection {
+                        url: server.server.agent_url.clone(),
+                        token: server.agent_token.clone(),
+                        fingerprint: server.agent_fingerprint.clone(),
+                    },
                     operation.clone(),
                     Some(job_id),
                 )
@@ -293,7 +353,8 @@ async fn simulate(state: &AppState, job: &JobRow) -> anyhow::Result<()> {
 }
 
 /// Maps a job row + payload to the agent operation that performs it.
-fn build_operation(job: &JobRow, payload: &serde_json::Value) -> Option<Operation> {
+/// Now async because backup operations need to resolve destinations from the database.
+async fn build_operation(state: &AppState, job: &JobRow, payload: &serde_json::Value) -> Option<Operation> {
     let site_id = job.job.site_id?;
 
     Some(match job.job.kind {
@@ -357,19 +418,147 @@ fn build_operation(job: &JobRow, payload: &serde_json::Value) -> Option<Operatio
                 .unwrap_or_else(|| vec![job.site_domain.clone().unwrap_or_default()]),
         },
         JobKind::SslRenew => Operation::RenewCertificate { site_id },
-        JobKind::BackupCreate => Operation::CreateBackup {
+        JobKind::BackupCreate => {
+            let destination_id = payload.get("destination_id").and_then(|v| v.as_i64());
+            let target = match destination_id {
+                Some(id) => {
+                    let dest = db::destinations::get(&state.db, id).await.ok().flatten()?;
+                    let creds = db::destinations::decrypt_credentials(&dest, &state.secrets).ok()?;
+                    let endpoint = dest.endpoint.as_deref().unwrap_or("s3.amazonaws.com");
+                    wp_common::protocol::ResticTarget {
+                        repo: format!("s3:{}/{}", endpoint, dest.bucket),
+                        password: creds.restic_password,
+                        env: vec![
+                            ("AWS_ACCESS_KEY_ID".into(), creds.access_key_id),
+                            ("AWS_SECRET_ACCESS_KEY".into(), creds.secret),
+                        ],
+                    }
+                }
+                None => wp_common::protocol::ResticTarget {
+                    repo: String::new(),
+                    password: String::new(),
+                    env: Vec::new(),
+                },
+            };
+            Operation::CreateBackup {
+                site_id,
+                scope: serde_json::from_value(
+                    payload.get("scope").cloned().unwrap_or_default(),
+                )
+                .unwrap_or(BackupScope::Full),
+                target,
+                retention: wp_common::models::RetentionPolicy::default(),
+            }
+        }
+        JobKind::BackupRestore => {
+            let destination_id = payload.get("destination_id").and_then(|v| v.as_i64());
+            let target = match destination_id {
+                Some(id) => {
+                    let dest = db::destinations::get(&state.db, id).await.ok().flatten()?;
+                    let creds = db::destinations::decrypt_credentials(&dest, &state.secrets).ok()?;
+                    let endpoint = dest.endpoint.as_deref().unwrap_or("s3.amazonaws.com");
+                    wp_common::protocol::ResticTarget {
+                        repo: format!("s3:{}/{}", endpoint, dest.bucket),
+                        password: creds.restic_password,
+                        env: vec![
+                            ("AWS_ACCESS_KEY_ID".into(), creds.access_key_id),
+                            ("AWS_SECRET_ACCESS_KEY".into(), creds.secret),
+                        ],
+                    }
+                }
+                None => wp_common::protocol::ResticTarget {
+                    repo: String::new(),
+                    password: String::new(),
+                    env: Vec::new(),
+                },
+            };
+            Operation::RestoreBackup {
+                site_id,
+                snapshot_id: payload
+                    .get("snapshot_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                scope: serde_json::from_value(
+                    payload.get("scope").cloned().unwrap_or_default(),
+                )
+                .unwrap_or(BackupScope::Full),
+                target,
+            }
+        }
+        // M2: WordPress management
+        JobKind::PluginAction => Operation::PluginAction {
             site_id,
-            scope: BackupScope::Full,
-        },
-        JobKind::BackupRestore => Operation::RestoreBackup {
-            site_id,
-            snapshot_id: payload
-                .get("snapshot_id")
+            slug: payload
+                .get("slug")
                 .and_then(|v| v.as_str())
                 .unwrap_or_default()
                 .to_string(),
-            scope: BackupScope::Full,
+            action: serde_json::from_value(
+                payload.get("action").cloned().unwrap_or_default(),
+            )
+            .unwrap_or(WpItemAction::Activate),
         },
+        JobKind::PluginUpdateAll => Operation::UpdateAllPlugins { site_id },
+        JobKind::ThemeAction => Operation::ThemeAction {
+            site_id,
+            slug: payload
+                .get("slug")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            action: serde_json::from_value(
+                payload.get("action").cloned().unwrap_or_default(),
+            )
+            .unwrap_or(WpItemAction::Activate),
+        },
+        JobKind::WpUserPasswordReset => Operation::ResetWpPassword {
+            site_id,
+            user_login: payload
+                .get("user_login")
+                .and_then(|v| v.as_str())
+                .unwrap_or("admin")
+                .to_string(),
+        },
+        JobKind::CronRun => Operation::RunCronEvent {
+            site_id,
+            hook: payload
+                .get("hook")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+        },
+        JobKind::CronModeSet => Operation::SetWpCron {
+            site_id,
+            mode: serde_json::from_value(
+                payload.get("mode").cloned().unwrap_or_default(),
+            )
+            .unwrap_or(CronMode::WpCron),
+        },
+        JobKind::SiteClone | JobKind::StagingCreate | JobKind::StagingPush => {
+            let source_site_id = payload.get("source_site_id").and_then(|v| v.as_i64()).unwrap_or(site_id);
+            let source_site = db::sites::get(&state.db, source_site_id).await.ok().flatten();
+            let target_site_id = payload.get("target_site_id").and_then(|v| v.as_i64()).unwrap_or(site_id);
+            let target_domain = payload.get("target_domain")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let staging = job.job.kind == JobKind::StagingCreate || job.job.kind == JobKind::StagingPush;
+            let request_ssl = payload.get("request_ssl").and_then(|v| v.as_bool()).unwrap_or(false);
+            let php_version = source_site.as_ref().map(|s| s.site.php_version).unwrap_or(PhpVersion::Php84);
+            let source_domain = source_site.map(|s| s.site.domain).unwrap_or_default();
+
+            Operation::CloneSite(wp_common::protocol::CloneSite {
+                source_site_id,
+                source_domain,
+                target_site_id,
+                target_domain,
+                php_version,
+                staging,
+                search_replace: true,
+                request_ssl,
+            })
+        }
         // Clone / staging / WordPress operations land with their milestones.
         _ => return None,
     })

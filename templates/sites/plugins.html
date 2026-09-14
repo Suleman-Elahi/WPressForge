@@ -1,0 +1,46 @@
+{% if let Some(e) = error %}
+<div class="banner warn">{{ e }}</div>
+{% elif plugins.is_empty() %}
+<div class="empty"><p>No plugins found.</p></div>
+{% else %}
+<div class="table-wrap">
+  <table class="data stack">
+    <thead><tr><th>Plugin</th><th>Version</th><th>Status</th><th>Update</th><th></th></tr></thead>
+    <tbody>
+    {% for p in plugins %}
+      <tr>
+        <td data-label="Plugin"><strong>{{ p.name }}</strong><br><span class="mono muted">{{ p.slug }}</span></td>
+        <td data-label="Version"><span class="tag">{{ p.version }}</span></td>
+        <td data-label="Status"><span class="pill {{ p.status_tone() }}">{{ p.status }}</span></td>
+        <td data-label="Update">{% if p.has_update() %}<span class="pill info">{{ p.update_version.as_deref().unwrap_or("") }}</span>{% else %}—{% endif %}</td>
+        <td class="actions">
+          {% if p.is_active() %}
+          <form class="inline-form" method="post" action="/sites/{{ site.site.id }}/plugins/action">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="slug" value="{{ p.slug }}">
+            <input type="hidden" name="action" value="deactivate">
+            <button class="btn sm" type="submit">Deactivate</button>
+          </form>
+          {% else %}
+          <form class="inline-form" method="post" action="/sites/{{ site.site.id }}/plugins/action">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="slug" value="{{ p.slug }}">
+            <input type="hidden" name="action" value="activate">
+            <button class="btn sm primary" type="submit">Activate</button>
+          </form>
+          {% endif %}
+          {% if p.has_update() %}
+          <form class="inline-form" method="post" action="/sites/{{ site.site.id }}/plugins/action">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="slug" value="{{ p.slug }}">
+            <input type="hidden" name="action" value="update">
+            <button class="btn sm" type="submit">Update</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}

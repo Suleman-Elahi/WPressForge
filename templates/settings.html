@@ -38,11 +38,50 @@
         <dt>Previous login</dt><dd>{{ last_login }}</dd>
         <dt>Sessions</dt><dd>cookie based, 14 day lifetime</dd>
         <dt>2FA</dt><dd class="muted">planned</dd>
-        <dt>API tokens</dt><dd class="muted">planned</dd>
       </dl>
       <form method="post" action="/logout" class="mt">
+        <input type="hidden" name="csrf_token" value="{{ chrome.csrf_token }}">
         <button class="btn" type="submit">Sign out</button>
       </form>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>API Tokens</h2></div>
+    <div class="card-body">
+      <p class="muted">Bearer tokens for external tools (CI, WP-CLI plugins). Each token has full panel access.</p>
+      <form method="post" action="/settings/tokens" class="field-row mt">
+        <input type="hidden" name="csrf_token" value="{{ chrome.csrf_token }}">
+        <div class="field" style="flex:1">
+          <input name="name" type="text" required placeholder="Token name (e.g. CI pipeline)" autocomplete="off">
+        </div>
+        <button class="btn primary" type="submit">Create token</button>
+      </form>
+      {% if tokens.is_empty() %}
+      <p class="muted mt">No tokens yet.</p>
+      {% else %}
+      <div class="table-wrap mt">
+        <table class="data stack">
+          <thead><tr><th>Name</th><th>Created</th><th>Last used</th><th></th></tr></thead>
+          <tbody>
+          {% for token in tokens %}
+            <tr>
+              <td data-label="Name">{{ token.name }}</td>
+              <td data-label="Created">{{ token.created_at }}</td>
+              <td data-label="Last used">{% match token.last_used_at %}{% when Some(when) %}{{ when }}{% when None %}—{% endmatch %}</td>
+              <td class="actions">
+                <form class="inline-form" method="post" action="/settings/tokens/{{ token.id }}/revoke"
+                      data-confirm="Revoke token '{{ token.name }}'?">
+                  <input type="hidden" name="csrf_token" value="{{ chrome.csrf_token }}">
+                  <button class="btn sm danger" type="submit">Revoke</button>
+                </form>
+              </td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
     </div>
   </section>
 
@@ -51,7 +90,7 @@
     <div class="card-body">
       <p class="muted">Restic repositories on S3, R2, B2, Wasabi or MinIO. Configured per panel and
         selected per site, with hourly/daily/weekly/monthly retention.</p>
-      <button class="btn" disabled>Add destination</button>
+      <a href="/settings/destinations" class="btn">Manage destinations</a>
     </div>
   </section>
 

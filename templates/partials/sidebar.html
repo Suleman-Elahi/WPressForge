@@ -22,6 +22,11 @@
       Jobs
       {% if chrome.active_jobs > 0 %}<span class="count">{{ chrome.active_jobs }}</span>{% endif %}
     </a>
+    <a href="/notifications" {% if chrome.section == "notifications" %}aria-current="page"{% endif %}
+       hx-get="/partials/notifications" hx-trigger="load, every 30s" hx-swap="innerHTML">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0"/></svg>
+      Notifications
+    </a>
 
     <span class="nav-label">Account</span>
     <a href="/audit" {% if chrome.section == "audit" %}aria-current="page"{% endif %}>
@@ -37,6 +42,7 @@
   <div class="sidebar-footer">
     <a class="btn sm" href="/sites/new">New site</a>
     <form method="post" action="/logout">
+      <input type="hidden" name="csrf_token" value="{{ chrome.csrf_token }}">
       <button class="btn ghost sm" type="submit">Sign out {{ chrome.user_name }}</button>
     </form>
   </div>

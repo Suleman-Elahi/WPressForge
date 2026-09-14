@@ -5,9 +5,20 @@
 //! [`OperationEnvelope`], response is [`OperationResult`].
 
 use crate::models::{
-    BackupScope, CacheSettings, DatabaseMode, PhpVersion, ResourceLimits, ServerMetrics, SiteStatus,
+    BackupScope, CacheSettings, CronMode, DatabaseMode, PhpVersion, ResourceLimits, RetentionPolicy,
+    ServerMetrics, SiteStatus, WpItemAction,
 };
 use serde::{Deserialize, Serialize};
+
+/// Restic backup target: repository URL, password, and environment variables
+/// (AWS credentials, etc.). Passed per operation so the agent stores no
+/// long-lived secrets.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResticTarget {
+    pub repo: String,
+    pub password: String,
+    pub env: Vec<(String, String)>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OperationEnvelope {
@@ -41,6 +52,7 @@ pub enum Operation {
     // -- node ---------------------------------------------------------------
     Ping,
     GetServerMetrics,
+    GetSiteMetrics { site_ids: Vec<i64> },
 
     // -- site lifecycle -----------------------------------------------------
     CreateSite(CreateSite),
@@ -71,20 +83,53 @@ pub enum Operation {
     InstallWordpress(InstallWordpress),
     UpdateWordpress { site_id: i64 },
 
+    // -- wordpress management (M2) ------------------------------------------
+    ListPlugins { site_id: i64 },
+    ListThemes { site_id: i64 },
+    ListWpUsers { site_id: i64 },
+    ListCronEvents { site_id: i64 },
+    CoreCheckUpdate { site_id: i64 },
+    PluginAction {
+        site_id: i64,
+        slug: String,
+        action: WpItemAction,
+    },
+    ThemeAction {
+        site_id: i64,
+        slug: String,
+        action: WpItemAction,
+    },
+    UpdateAllPlugins { site_id: i64 },
+    ResetWpPassword { site_id: i64, user_login: String },
+    RunCronEvent { site_id: i64, hook: String },
+    SetWpCron { site_id: i64, mode: CronMode },
+    PurgeUrls { site_id: i64, urls: Vec<String> },
+
     // -- backups ------------------------------------------------------------
-    CreateBackup { site_id: i64, scope: BackupScope },
+    CreateBackup {
+        site_id: i64,
+        scope: BackupScope,
+        target: ResticTarget,
+        retention: RetentionPolicy,
+    },
     RestoreBackup {
         site_id: i64,
         snapshot_id: String,
         scope: BackupScope,
+        target: ResticTarget,
     },
-    ListBackups { site_id: i64 },
+    ListBackups {
+        site_id: i64,
+        target: ResticTarget,
+    },
+    InitBackupRepo { target: ResticTarget },
 
     // -- logs ---------------------------------------------------------------
     TailLogs {
         site_id: i64,
         stream: LogStream,
         lines: u32,
+        grep: Option<String>,
     },
 }
 
@@ -93,6 +138,7 @@ impl Operation {
         match self {
             Self::Ping => "ping",
             Self::GetServerMetrics => "get_server_metrics",
+            Self::GetSiteMetrics { .. } => "get_site_metrics",
             Self::CreateSite(_) => "create_site",
             Self::DeleteSite { .. } => "delete_site",
             Self::StartSite { .. } => "start_site",
@@ -111,9 +157,22 @@ impl Operation {
             Self::WpCli { .. } => "wp_cli",
             Self::InstallWordpress(_) => "install_wordpress",
             Self::UpdateWordpress { .. } => "update_wordpress",
+            Self::ListPlugins { .. } => "list_plugins",
+            Self::ListThemes { .. } => "list_themes",
+            Self::ListWpUsers { .. } => "list_wp_users",
+            Self::ListCronEvents { .. } => "list_cron_events",
+            Self::CoreCheckUpdate { .. } => "core_check_update",
+            Self::PluginAction { .. } => "plugin_action",
+            Self::ThemeAction { .. } => "theme_action",
+            Self::UpdateAllPlugins { .. } => "update_all_plugins",
+            Self::ResetWpPassword { .. } => "reset_wp_password",
+            Self::RunCronEvent { .. } => "run_cron_event",
+            Self::SetWpCron { .. } => "set_wp_cron",
+            Self::PurgeUrls { .. } => "purge_urls",
             Self::CreateBackup { .. } => "create_backup",
             Self::RestoreBackup { .. } => "restore_backup",
             Self::ListBackups { .. } => "list_backups",
+            Self::InitBackupRepo { .. } => "init_backup_repo",
             Self::TailLogs { .. } => "tail_logs",
         }
     }
@@ -146,9 +205,12 @@ pub struct InstallWordpress {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CloneSite {
     pub source_site_id: i64,
+    pub source_domain: String,
     pub target_site_id: i64,
     pub target_domain: String,
     pub php_version: PhpVersion,
+    /// When true, clone is treated as staging (blog_public=0, WP_ENVIRONMENT_TYPE=staging).
+    pub staging: bool,
     pub search_replace: bool,
     pub request_ssl: bool,
 }
@@ -256,6 +318,19 @@ pub enum OperationData {
         exit_code: i32,
     },
     Lines(Vec<String>),
+    Plugins(Vec<crate::models::PluginInfo>),
+    Themes(Vec<crate::models::ThemeInfo>),
+    WpUsers(Vec<crate::models::WpUserInfo>),
+    CronEvents(Vec<crate::models::CronEventInfo>),
+    CoreUpdate {
+        current: String,
+        latest: Option<String>,
+    },
+    GeneratedPassword {
+        user_login: String,
+        password: String,
+    },
+    SiteMetrics(Vec<crate::models::SiteMetricSample>),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -48,6 +48,8 @@ hmac = "0.12"
 sha2 = "0.10"
 clap = { version = "4", features = ["derive", "env"] }
 humantime = "2"
+serde_urlencoded = "0.7"
+aes-gcm = "0.10"
 
 [profile.release]
 opt-level = 3

@@ -1,5 +1,5 @@
 use super::{redirect_with_flash, render, Chrome, FlashQuery};
-use crate::auth::CurrentUser;
+use crate::auth::{CurrentSession, CurrentUser};
 use crate::db;
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
@@ -20,11 +20,12 @@ struct ListTemplate {
 pub async fn list(
     State(state): State<AppState>,
     user: CurrentUser,
+    session: CurrentSession,
     Query(query): Query<FlashQuery>,
 ) -> AppResult<Response> {
     let servers = db::servers::list(&state.db).await?;
     Ok(render(ListTemplate {
-        chrome: Chrome::new(&state, &user, "servers", "Servers", query.flash).await,
+        chrome: Chrome::new(&state, &user, &session, "servers", "Servers", query.flash).await,
         servers,
     }))
 }
@@ -36,11 +37,15 @@ struct DetailTemplate {
     server: db::servers::ServerRow,
     sites: Vec<db::sites::SiteRow>,
     jobs: Vec<db::jobs::JobRow>,
+    cpu_spark: Spark,
+    memory_spark: Spark,
+    disk_spark: Spark,
 }
 
 pub async fn detail(
     State(state): State<AppState>,
     user: CurrentUser,
+    session: CurrentSession,
     Path(id): Path<i64>,
     Query(query): Query<FlashQuery>,
 ) -> AppResult<Response> {
@@ -48,10 +53,17 @@ pub async fn detail(
     let sites = db::sites::list_for_server(&state.db, id).await?;
     let jobs = db::jobs::list(&state.db, 6).await?;
 
+    // Fetch 24h metrics history for sparklines.
+    let history = db::metrics::server_history(&state.db, id, 24).await.unwrap_or_default();
+    let cpu_vals: Vec<f32> = history.iter().map(|r| r.cpu as f32).collect();
+    let mem_vals: Vec<f32> = history.iter().map(|r| r.memory as f32).collect();
+    let disk_vals: Vec<f32> = history.iter().map(|r| r.disk as f32).collect();
+
     Ok(render(DetailTemplate {
         chrome: Chrome::new(
             &state,
             &user,
+            &session,
             "servers",
             server.server.name.clone(),
             query.flash,
@@ -60,6 +72,9 @@ pub async fn detail(
         server,
         sites,
         jobs,
+        cpu_spark: spark_from_values(&cpu_vals),
+        memory_spark: spark_from_values(&mem_vals),
+        disk_spark: spark_from_values(&disk_vals),
     }))
 }
 
@@ -74,10 +89,11 @@ struct NewTemplate {
 pub async fn new_form(
     State(state): State<AppState>,
     user: CurrentUser,
+    session: CurrentSession,
     Query(query): Query<FlashQuery>,
 ) -> AppResult<Response> {
     Ok(render(NewTemplate {
-        chrome: Chrome::new(&state, &user, "servers", "Attach server", query.flash).await,
+        chrome: Chrome::new(&state, &user, &session, "servers", "Attach server", query.flash).await,
         suggested_token: crate::auth::random_token(),
     }))
 }
@@ -122,6 +138,7 @@ pub async fn create(
             ip_address: form.ip_address.trim(),
             provider: Some(form.provider.trim()).filter(|s| !s.is_empty()),
             region: Some(form.region.trim()).filter(|s| !s.is_empty()),
+            agent_fingerprint: None,
         },
     )
     .await?;
@@ -138,7 +155,15 @@ pub async fn create(
 
     // Probe the agent immediately so the operator gets feedback now rather than
     // at the next heartbeat.
-    let flash = match state.agent.ping(form.agent_url.trim(), form.agent_token.trim()).await {
+    let flash = match state
+        .agent
+        .ping(&crate::agent::ServerConnection {
+            url: form.agent_url.trim().to_owned(),
+            token: form.agent_token.trim().to_owned(),
+            fingerprint: None,
+        })
+        .await
+    {
         Ok(result) => {
             let version = match &result.data {
                 wp_common::protocol::OperationData::Pong { agent_version, .. } => {
@@ -208,4 +233,60 @@ pub async fn metrics_fragment(
 ) -> AppResult<Response> {
     let server = db::servers::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
     Ok(super::no_store(render(MetricsFragment { server })))
+}
+
+// ---------------------------------------------------------------------------
+// SVG sparkline renderer
+// ---------------------------------------------------------------------------
+
+pub struct Spark {
+    pub points: String,
+    pub last: String,
+    pub tone: &'static str,
+}
+
+impl Spark {
+    pub fn from_values(values: &[f32], width: f32, height: f32) -> Self {
+        if values.is_empty() {
+            return Self {
+                points: String::new(),
+                last: "0".into(),
+                tone: "ok",
+            };
+        }
+
+        let last_val = *values.last().unwrap();
+        let tone = if last_val > 85.0 {
+            "bad"
+        } else if last_val > 60.0 {
+            "warn"
+        } else {
+            "ok"
+        };
+
+        let n = values.len();
+        let max = values.iter().copied().fold(f32::MIN, f32::max).max(1.0);
+        let min = values.iter().copied().fold(f32::MAX, f32::min).min(0.0);
+        let range = (max - min).max(1.0);
+
+        let points: Vec<String> = values
+            .iter()
+            .enumerate()
+            .map(|(i, &v)| {
+                let x = if n == 1 { width / 2.0 } else { i as f32 * width / (n - 1) as f32 };
+                let y = height - ((v - min) / range * height);
+                format!("{x:.1},{y:.1}")
+            })
+            .collect();
+
+        Self {
+            points: points.join(" "),
+            last: format!("{:.0}", last_val),
+            tone,
+        }
+    }
+}
+
+pub fn spark_from_values(values: &[f32]) -> Spark {
+    Spark::from_values(values, 120.0, 28.0)
 }

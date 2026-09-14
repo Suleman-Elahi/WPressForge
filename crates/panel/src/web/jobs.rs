@@ -1,5 +1,5 @@
 use super::{render, Chrome, FlashQuery};
-use crate::auth::CurrentUser;
+use crate::auth::{CurrentSession, CurrentUser};
 use crate::db;
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
@@ -18,11 +18,12 @@ struct ListTemplate {
 pub async fn list(
     State(state): State<AppState>,
     user: CurrentUser,
+    session: CurrentSession,
     Query(query): Query<FlashQuery>,
 ) -> AppResult<Response> {
     let jobs = db::jobs::list(&state.db, 100).await?;
     Ok(render(ListTemplate {
-        chrome: Chrome::new(&state, &user, "jobs", "Jobs", query.flash).await,
+        chrome: Chrome::new(&state, &user, &session, "jobs", "Jobs", query.flash).await,
         jobs,
     }))
 }
@@ -39,6 +40,7 @@ struct DetailTemplate {
 pub async fn detail(
     State(state): State<AppState>,
     user: CurrentUser,
+    session: CurrentSession,
     Path(id): Path<i64>,
     Query(query): Query<FlashQuery>,
 ) -> AppResult<Response> {
@@ -49,6 +51,7 @@ pub async fn detail(
         chrome: Chrome::new(
             &state,
             &user,
+            &session,
             "jobs",
             format!("Job #{id}"),
             query.flash,

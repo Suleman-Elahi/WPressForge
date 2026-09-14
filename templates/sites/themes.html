@@ -1,0 +1,39 @@
+{% if let Some(e) = error %}
+<div class="banner warn">{{ e }}</div>
+{% elif themes.is_empty() %}
+<div class="empty"><p>No themes found.</p></div>
+{% else %}
+<div class="table-wrap">
+  <table class="data stack">
+    <thead><tr><th>Theme</th><th>Version</th><th>Status</th><th>Update</th><th></th></tr></thead>
+    <tbody>
+    {% for t in themes %}
+      <tr>
+        <td data-label="Theme"><strong>{{ t.name }}</strong><br><span class="mono muted">{{ t.slug }}</span></td>
+        <td data-label="Version"><span class="tag">{{ t.version }}</span></td>
+        <td data-label="Status"><span class="pill {% if t.is_active() %}ok{% else %}muted{% endif %}">{{ t.status }}</span></td>
+        <td data-label="Update">{% if t.has_update() %}<span class="pill info">{{ t.update_version.as_deref().unwrap_or("") }}</span>{% else %}—{% endif %}</td>
+        <td class="actions">
+          {% if !t.is_active() %}
+          <form class="inline-form" method="post" action="/sites/{{ site.site.id }}/themes/action">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="slug" value="{{ t.slug }}">
+            <input type="hidden" name="action" value="activate">
+            <button class="btn sm primary" type="submit">Activate</button>
+          </form>
+          {% endif %}
+          {% if t.has_update() %}
+          <form class="inline-form" method="post" action="/sites/{{ site.site.id }}/themes/action">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="slug" value="{{ t.slug }}">
+            <input type="hidden" name="action" value="update">
+            <button class="btn sm" type="submit">Update</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}

@@ -1,12 +1,13 @@
 //! Server-rendered UI. Askama templates, HTMX for the few places that need
 //! live updates, no client-side framework and no build step.
 
+pub mod destinations;
 pub mod jobs;
 pub mod pages;
 pub mod servers;
 pub mod sites;
 
-use crate::auth::CurrentUser;
+use crate::auth::{CurrentUser, CurrentSession};
 use crate::state::AppState;
 use askama::Template;
 use axum::http::{header, StatusCode};
@@ -23,17 +24,20 @@ pub struct Chrome {
     pub user_initials: String,
     pub active_jobs: i64,
     pub flash: Option<String>,
+    pub csrf_token: String,
 }
 
 impl Chrome {
     pub async fn new(
         state: &AppState,
         user: &CurrentUser,
+        session: &CurrentSession,
         section: &'static str,
         title: impl Into<String>,
         flash: Option<String>,
     ) -> Self {
         let active_jobs = crate::db::jobs::count_active(&state.db).await.unwrap_or(0);
+        let csrf_token = state.csrf.token(&session.0);
         Self {
             title: title.into(),
             section,
@@ -41,6 +45,7 @@ impl Chrome {
             user_initials: user.0.initials(),
             active_jobs,
             flash,
+            csrf_token,
         }
     }
 }
@@ -123,6 +128,11 @@ pub fn routes() -> Router<AppState> {
         .route("/", get(pages::dashboard))
         .route("/audit", get(pages::audit))
         .route("/settings", get(pages::settings))
+        .route("/settings/tokens", post(pages::create_token))
+        .route("/settings/tokens/{id}/revoke", post(pages::revoke_token))
+        .route("/notifications", get(pages::notifications))
+        .route("/notifications/{id}/resolve", post(pages::resolve_notification))
+        .route("/partials/notifications", get(pages::notification_badge))
         .route("/servers", get(servers::list))
         .route("/servers/new", get(servers::new_form))
         .route("/servers", post(servers::create))
@@ -138,6 +148,21 @@ pub fn routes() -> Router<AppState> {
         .route("/sites/{id}/limits", post(sites::update_limits))
         .route("/sites/{id}/domains", post(sites::add_domain))
         .route("/sites/{id}/domains/remove", post(sites::remove_domain))
+        // M2: WordPress management
+        .route("/sites/{id}/plugins/action", post(sites::plugin_action))
+        .route("/sites/{id}/themes/action", post(sites::theme_action))
+        .route("/sites/{id}/wpusers/reset-password", post(sites::reset_password))
+        .route("/sites/{id}/cron/run", post(sites::cron_run))
+        .route("/sites/{id}/console", get(sites::console_form))
+        .route("/sites/{id}/console", post(sites::console_submit))
+        // M3: Backup restore
+        .route("/sites/{id}/backups/{snapshot}/restore", post(sites::restore_backup))
+        .route("/sites/{id}/backups/sync", post(sites::sync_backups))
+        // M4: Clone & staging
+        .route("/sites/{id}/clone", get(sites::clone_form))
+        .route("/sites/{id}/clone", post(sites::clone_create))
+        .route("/sites/{id}/staging/create", post(sites::staging_create))
+        .route("/sites/{id}/staging/push", post(sites::staging_push))
         .route("/jobs", get(jobs::list))
         .route("/jobs/{id}", get(jobs::detail))
         // HTMX fragments
@@ -145,4 +170,16 @@ pub fn routes() -> Router<AppState> {
         .route("/partials/jobs/{id}", get(jobs::progress_fragment))
         .route("/partials/sites/{id}/status", get(sites::status_fragment))
         .route("/partials/servers/{id}/metrics", get(servers::metrics_fragment))
+        // M2: WordPress fragments
+        .route("/partials/sites/{id}/plugins", get(sites::plugins_fragment))
+        .route("/partials/sites/{id}/themes", get(sites::themes_fragment))
+        .route("/partials/sites/{id}/wpusers", get(sites::wpusers_fragment))
+        .route("/partials/sites/{id}/cron", get(sites::cron_fragment))
+        .route("/partials/sites/{id}/logs", get(sites::logs_fragment))
+        // M3: Backup destinations
+        .route("/settings/destinations", get(destinations::list))
+        .route("/settings/destinations/new", get(destinations::new_form))
+        .route("/settings/destinations", post(destinations::create))
+        .route("/settings/destinations/{id}/delete", post(destinations::delete))
+        .route("/settings/destinations/{id}/test", post(destinations::test))
 }

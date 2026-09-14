@@ -1,0 +1,20 @@
+The scaffold is in place and verified end to end. Here's what exists now.
+
+Workspace — Cargo workspace with three crates matching the plan's structure:
+
+crates/common — models plus the panel↔agent protocol (Operation/OperationResult, versioned at PROTOCOL_VERSION = 1) and display helpers so templates never need format filters.
+crates/panel — Axum + Askama + SQLite control plane: session auth (Argon2), repositories, job workers, JSON API under /api/v1, server-rendered UI.
+crates/agent — the privileged node daemon: Docker, Nginx, MariaDB, filesystem/UID isolation, certbot, Restic, WP-CLI, each behind a typed operation.
+Verified by running it, not just compiling:
+
+Fresh database → migrations, admin bootstrap (generated password logged once), demo seed, every page returns 200; unauthenticated pages redirect, API returns 401.
+Site creation from the form enqueues site.create, a worker executes it, progress and per-step timeline appear, and the site lands online with PHP/WordPress/SSL state applied. Same for start/stop/restart/backup/cache-clear/ssl-issue/wordpress-update/php-switch.
+Attached a real local wp-agent to the panel: it answered the ping on attach, then executed a create_site through the full 9-step plan and reported each step back into the job view. The agent starts in dry-run (commands logged, host untouched), so this was safe.
+Rendered Nginx vhost inspected: HTTP→HTTPS redirect server, TLS block, WordPress-aware FastCGI bypass rules, login rate limit, static-asset caching, upload PHP-execution denial, plus a matching per-site fastcgi_cache_path include.
+Performance and UI choices: one ~900-line stylesheet, no webfonts, no framework, ~2 KB of JS (theme, mobile nav, confirm dialogs). HTMX polls only the fragments that change — top-bar job indicator, site status banner, server metric tiles, job progress — and job polling stops when the job finishes. Brotli/gzip response compression, precompressed static serving, dark/light themes, tables that collapse into labelled stacked rows under 900px.
+
+Deployment: systemd units for both binaries (the panel runs unprivileged with a hardened sandbox), Nginx globals for the ACME webroot and login rate-limit zone, a PHP-FPM image with OPcache/JIT tuning and WP-CLI, and 
+install-agent.sh
+ for a clean Ubuntu/Debian host.
+
+Two things worth knowing: the panel currently accepts self-signed agent certificates (danger_accept_invalid_certs) pending per-server pinning, and API-token auth is stubbed — only session auth works on /api/v1 today. Both are marked in the code. Cloning, staging, restore and plugin/theme management are deliberately unimplemented and refuse loudly rather than half-working, matching the phase ordering in your plan.

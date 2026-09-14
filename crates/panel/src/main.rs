@@ -4,12 +4,16 @@
 //! that drive node agents.
 
 mod agent;
+mod alerts;
 mod api;
 mod auth;
 mod config;
+mod csrf;
 mod db;
 mod error;
 mod jobs;
+mod scheduler;
+mod secrets;
 mod state;
 mod web;
 
@@ -20,6 +24,7 @@ use axum::http::{header, HeaderValue, StatusCode};
 use axum::routing::{get, post};
 use axum::{middleware, Router};
 use clap::Parser;
+use rand::RngCore;
 use std::time::Duration;
 use tower_http::compression::CompressionLayer;
 use tower_http::services::ServeDir;
@@ -64,8 +69,24 @@ async fn main() -> anyhow::Result<()> {
         tracing::warn!(orphans, "marked interrupted jobs as failed");
     }
 
-    let state = AppState::new(pool, config.clone(), AgentClient::new()?);
+    // Generate per-boot CSRF key from random bytes.
+    let csrf_key = {
+        let mut bytes = [0u8; 32];
+        rand::rng().fill_bytes(&mut bytes);
+        csrf::CsrfKey(bytes)
+    };
+
+    // Load or generate the encryption key for destination secrets.
+    let db_dir = config
+        .database
+        .parent()
+        .unwrap_or(std::path::Path::new("."));
+    let secrets = secrets::SecretBox::load_or_generate(db_dir)?;
+
+    let state = AppState::new(pool, config.clone(), AgentClient::new()?, csrf_key, secrets);
     jobs::spawn(state.clone(), config.workers);
+    scheduler::spawn_scheduler(state.clone());
+    tokio::spawn(alerts_loop(state.clone()));
 
     let app = router(state.clone(), &config);
     let listener = tokio::net::TcpListener::bind(config.bind).await?;
@@ -158,4 +179,12 @@ async fn shutdown_signal() {
     tracing::info!("shutting down");
     // Give in-flight requests a moment to finish.
     tokio::time::sleep(Duration::from_millis(200)).await;
+}
+
+async fn alerts_loop(state: AppState) {
+    let mut ticker = tokio::time::interval(Duration::from_secs(60));
+    loop {
+        ticker.tick().await;
+        alerts::evaluate(&state).await;
+    }
 }

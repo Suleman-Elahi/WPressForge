@@ -47,6 +47,7 @@ pub async fn demo_data(db: &Db) -> anyhow::Result<()> {
             ip_address: "203.0.113.10",
             provider: Some("Hetzner"),
             region: Some("fsn1"),
+            agent_fingerprint: None,
         },
     )
     .await?;

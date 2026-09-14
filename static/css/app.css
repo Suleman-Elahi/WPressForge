@@ -688,6 +688,8 @@ select {
 .meter.warn > span { background: var(--warn); }
 .meter.bad > span { background: var(--bad); }
 
+.spark { width: 120px; height: 28px; }
+
 .meter-row {
   display: grid;
   gap: 0.3rem;

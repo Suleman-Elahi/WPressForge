@@ -65,6 +65,7 @@ fn map(row: &sqlx::sqlite::SqliteRow) -> SiteRow {
             "staging" => Environment::Staging,
             _ => Environment::Production,
         },
+        parent_site_id: row.get("parent_site_id"),
         uid: row.get::<i64, _>("uid") as u32,
         disk_usage_mb: row.get::<i64, _>("disk_usage_mb") as u64,
         created_at: parse_ts(row.get::<String, _>("created_at").as_str()),
@@ -370,4 +371,30 @@ pub async fn record_backup(
     .fetch_one(db)
     .await?;
     Ok(row.get("id"))
+}
+
+/// List all sites (for alert evaluation).
+pub async fn list_all(db: &Db) -> sqlx::Result<Vec<SiteRow>> {
+    let rows = sqlx::query(AssertSqlSafe(format!("{SELECT} ORDER BY s.domain")))
+        .fetch_all(db)
+        .await?;
+    Ok(rows.iter().map(map).collect())
+}
+
+/// Get the most recent backup timestamp for a site.
+pub async fn last_backup_time(db: &Db, site_id: i64) -> sqlx::Result<Option<String>> {
+    let row = sqlx::query("SELECT created_at FROM backups WHERE site_id = ?1 ORDER BY created_at DESC LIMIT 1")
+        .bind(site_id)
+        .fetch_optional(db)
+        .await?;
+    Ok(row.map(|r| r.get("created_at")))
+}
+
+/// Get domain by site ID.
+pub async fn domain_by_id(db: &Db, site_id: i64) -> sqlx::Result<String> {
+    let row = sqlx::query("SELECT domain FROM sites WHERE id = ?1")
+        .bind(site_id)
+        .fetch_one(db)
+        .await?;
+    Ok(row.get("domain"))
 }

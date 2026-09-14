@@ -10,6 +10,6 @@ pub mod protocol;
 
 /// Bumped whenever the wire format changes in a backwards-incompatible way.
 /// The agent refuses requests carrying a different major version.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 pub use error::{Error, Result};

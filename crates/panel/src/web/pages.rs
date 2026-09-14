@@ -1,10 +1,10 @@
-use super::{render, Chrome, FlashQuery};
-use crate::auth::{self, CurrentUser};
+use super::{redirect_with_flash, render, Chrome, FlashQuery};
+use crate::auth::{self, CurrentSession, CurrentUser};
 use crate::db;
 use crate::error::AppResult;
 use crate::state::AppState;
 use askama::Template;
-use axum::extract::{Query, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::Form;
@@ -31,6 +31,7 @@ struct DashboardTemplate {
 pub async fn dashboard(
     State(state): State<AppState>,
     user: CurrentUser,
+    session: CurrentSession,
     Query(query): Query<FlashQuery>,
 ) -> AppResult<Response> {
     let servers = db::servers::list(&state.db).await?;
@@ -39,7 +40,7 @@ pub async fn dashboard(
     let jobs = db::jobs::list(&state.db, 8).await?;
 
     let template = DashboardTemplate {
-        chrome: Chrome::new(&state, &user, "dashboard", "Overview", query.flash).await,
+        chrome: Chrome::new(&state, &user, &session, "dashboard", "Overview", query.flash).await,
         total_servers: servers.len() as i64,
         total_sites: db::sites::count(&state.db).await?,
         online_sites: db::sites::count_by_status(&state.db, SiteStatus::Online).await?,
@@ -66,11 +67,12 @@ struct AuditTemplate {
 pub async fn audit(
     State(state): State<AppState>,
     user: CurrentUser,
+    session: CurrentSession,
     Query(query): Query<FlashQuery>,
 ) -> AppResult<Response> {
     let entries = db::audit::list(&state.db, 200).await?;
     Ok(render(AuditTemplate {
-        chrome: Chrome::new(&state, &user, "audit", "Audit log", query.flash).await,
+        chrome: Chrome::new(&state, &user, &session, "audit", "Audit log", query.flash).await,
         entries,
     }))
 }
@@ -92,20 +94,23 @@ struct SettingsTemplate {
     workers: usize,
     database: String,
     demo_data: bool,
+    tokens: Vec<db::tokens::ApiToken>,
 }
 
 pub async fn settings(
     State(state): State<AppState>,
     user: CurrentUser,
+    session: CurrentSession,
     Query(query): Query<FlashQuery>,
 ) -> AppResult<Response> {
     let uptime = humantime::format_duration(std::time::Duration::from_secs(
         state.started_at.elapsed().as_secs(),
     ))
     .to_string();
+    let tokens = db::tokens::list(&state.db, user.0.id).await?;
 
     Ok(render(SettingsTemplate {
-        chrome: Chrome::new(&state, &user, "settings", "Settings", query.flash).await,
+        chrome: Chrome::new(&state, &user, &session, "settings", "Settings", query.flash).await,
         email: user.0.email.clone(),
         role: user.0.role.clone(),
         member_since: wp_common::fmt::timestamp(user.0.created_at),
@@ -118,7 +123,38 @@ pub async fn settings(
         workers: state.config.workers,
         database: state.config.database.display().to_string(),
         demo_data: state.config.demo_data,
+        tokens,
     }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TokenForm {
+    pub name: String,
+}
+
+pub async fn create_token(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Form(form): Form<TokenForm>,
+) -> AppResult<Response> {
+    let name = form.name.trim();
+    if name.is_empty() {
+        return Err(crate::error::AppError::BadRequest("token name is required".into()));
+    }
+    let (_id, plaintext) = db::tokens::create(&state.db, user.0.id, name).await?;
+    Ok(redirect_with_flash(
+        "/settings",
+        &format!("Token created: {plaintext} — copy it now, it won't be shown again."),
+    ))
+}
+
+pub async fn revoke_token(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<i64>,
+) -> AppResult<Response> {
+    db::tokens::revoke(&state.db, user.0.id, id).await?;
+    Ok(redirect_with_flash("/settings", "Token revoked."))
 }
 
 // ---------------------------------------------------------------------------
@@ -157,10 +193,31 @@ pub async fn login_submit(
     let ip = headers
         .get("x-forwarded-for")
         .and_then(|v| v.to_str().ok())
-        .unwrap_or_default();
+        .unwrap_or_default()
+        .split(',')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let ip = if ip.is_empty() { "127.0.0.1".to_string() } else { ip };
 
-    match auth::login(&state, &form.email, &form.password, user_agent, ip).await? {
+    // Check throttle before any crypto work.
+    if auth::is_locked(&state.db, &ip).await? {
+        auth::record_attempt(&state.db, &ip, &form.email, false).await?;
+        return Ok((
+            StatusCode::TOO_MANY_REQUESTS,
+            render(LoginTemplate {
+                error: Some("Too many attempts. Try again in 15 minutes.".into()),
+                email: form.email,
+            }),
+        )
+            .into_response());
+    }
+
+    match auth::login(&state, &form.email, &form.password, user_agent, &ip).await? {
         Some(outcome) => {
+            auth::clear_failures(&state.db, &ip).await?;
+            auth::record_attempt(&state.db, &ip, &outcome.user.email, true).await?;
             db::audit::record(
                 &state.db,
                 &outcome.user.email,
@@ -181,6 +238,7 @@ pub async fn login_submit(
             Ok(response)
         }
         None => {
+            auth::record_attempt(&state.db, &ip, &form.email, false).await?;
             db::audit::record(
                 &state.db,
                 &form.email,
@@ -223,4 +281,55 @@ pub async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Respon
             .expect("valid cookie"),
     );
     response
+}
+
+// ---------------------------------------------------------------------------
+// Notifications
+// ---------------------------------------------------------------------------
+
+#[derive(Template)]
+#[template(path = "notifications.html")]
+struct NotificationsTemplate {
+    chrome: Chrome,
+    open: Vec<db::notifications::Notification>,
+    recent: Vec<db::notifications::Notification>,
+}
+
+pub async fn notifications(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    session: CurrentSession,
+    Query(query): Query<FlashQuery>,
+) -> AppResult<Response> {
+    let open = db::notifications::list_open(&state.db, 50).await?;
+    let recent = db::notifications::list_recent(&state.db, 20).await?;
+    Ok(render(NotificationsTemplate {
+        chrome: Chrome::new(&state, &user, &session, "notifications", "Notifications", query.flash).await,
+        open,
+        recent,
+    }))
+}
+
+pub async fn resolve_notification(
+    State(state): State<AppState>,
+    _user: CurrentUser,
+    Path(id): Path<i64>,
+) -> AppResult<Response> {
+    db::notifications::resolve(&state.db, id).await?;
+    Ok(super::redirect_with_flash("/notifications", "Notification resolved"))
+}
+
+/// HTMX fragment: notification badge (open count).
+pub async fn notification_badge(
+    State(state): State<AppState>,
+) -> AppResult<Response> {
+    let count = db::notifications::count_open(&state.db).await.unwrap_or(0);
+    let html = if count > 0 {
+        format!(
+            "<a href=\"/notifications\" class=\"btn sm\" style=\"position:relative\">Notifications <span class=\"pill bad\" style=\"margin-left:.25rem\">{count}</span></a>"
+        )
+    } else {
+        "<a href=\"/notifications\" class=\"btn sm ghost\">Notifications</a>".into()
+    };
+    Ok(axum::response::Html(html).into_response())
 }

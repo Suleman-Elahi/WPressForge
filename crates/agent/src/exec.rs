@@ -29,10 +29,26 @@ pub async fn run<S: AsRef<OsStr> + std::fmt::Debug>(
     program: &str,
     args: &[S],
 ) -> Result<CommandOutput> {
+    run_with_env(dry_run, program, args, &[]).await
+}
+
+/// Runs `program` with `args` and environment variables.
+/// Only environment variable KEYS are logged, never values.
+pub async fn run_with_env<S: AsRef<OsStr> + std::fmt::Debug>(
+    dry_run: bool,
+    program: &str,
+    args: &[S],
+    env: &[(String, String)],
+) -> Result<CommandOutput> {
     let printable = format!("{program} {args:?}");
+    let env_keys: Vec<&str> = env.iter().map(|(k, _)| k.as_str()).collect();
 
     if dry_run {
-        tracing::info!(command = %printable, "dry-run: not executed");
+        tracing::info!(
+            command = %printable,
+            env_keys = ?env_keys,
+            "dry-run: not executed"
+        );
         return Ok(CommandOutput {
             stdout: String::new(),
             stderr: String::new(),
@@ -41,10 +57,14 @@ pub async fn run<S: AsRef<OsStr> + std::fmt::Debug>(
         });
     }
 
-    tracing::debug!(command = %printable, "executing");
+    tracing::debug!(command = %printable, env_keys = ?env_keys, "executing");
     let started = Instant::now();
-    let output: Output = Command::new(program)
-        .args(args)
+    let mut cmd = Command::new(program);
+    cmd.args(args);
+    for (key, value) in env {
+        cmd.env(key, value);
+    }
+    let output: Output = cmd
         .output()
         .await
         .map_err(|e| Error::Command {

@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1>WP-CLI Console — {{ site.site.domain }}</h1>
+    <p>Run whitelisted WP-CLI commands inside the site container. All commands are audit-logged.</p>
+  </div>
+</div>
+
+<section class="card">
+  <div class="card-head"><h2>Command</h2></div>
+  <div class="card-body">
+    <form method="post" action="/sites/{{ site.site.id }}/console">
+      <input type="hidden" name="csrf_token" value="{{ chrome.csrf_token }}">
+      <div class="field-row">
+        <div class="field" style="flex:1">
+          <label for="cmd">$ wp</label>
+          <input id="cmd" name="command" type="text" required placeholder="plugin list --status=active"
+                 autocomplete="off" spellcheck="false" style="font-family:monospace">
+        </div>
+        <button class="btn primary" type="submit" style="align-self:end">Run</button>
+      </div>
+    </form>
+  </div>
+</section>
+
+{% if let Some(e) = error %}
+<section class="card mt">
+  <div class="card-body">
+    <div class="banner warn">{{ e }}</div>
+  </div>
+</section>
+{% endif %}
+
+{% if let Some(out) = output %}
+<section class="card mt">
+  <div class="card-head"><h2>Output</h2></div>
+  <div class="card-body">
+    <pre class="log">{{ out }}</pre>
+  </div>
+</section>
+{% endif %}
+
+{% endblock %}

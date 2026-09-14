@@ -19,6 +19,10 @@ pub struct Config {
     #[arg(long, env = "WP_AGENT_SITES_ROOT", default_value = "/var/www")]
     pub sites_root: PathBuf,
 
+    /// FastCGI cache root. One subdirectory per site.
+    #[arg(long, env = "WP_AGENT_CACHE_ROOT", default_value = "/var/cache/nginx")]
+    pub cache_root: PathBuf,
+
     /// Where the agent keeps its local index of managed sites.
     #[arg(long, env = "WP_AGENT_STATE", default_value = "/var/lib/wp-agent/state.json")]
     pub state_file: PathBuf,
@@ -43,6 +47,19 @@ pub struct Config {
     /// Email used for Let's Encrypt registration.
     #[arg(long, env = "WP_AGENT_ACME_EMAIL")]
     pub acme_email: Option<String>,
+
+    /// TLS certificate file (PEM). If omitted, a self-signed certificate is
+    /// generated and persisted next to the state file.
+    #[arg(long, env = "WP_AGENT_TLS_CERT")]
+    pub tls_cert: Option<PathBuf>,
+
+    /// TLS private key file (PEM). Used together with `--tls-cert`.
+    #[arg(long, env = "WP_AGENT_TLS_KEY")]
+    pub tls_key: Option<PathBuf>,
+
+    /// Force self-signed certificate generation even if one already exists.
+    #[arg(long, env = "WP_AGENT_TLS_SELF_SIGNED", default_value_t = false)]
+    pub tls_self_signed: bool,
 }
 
 impl Config {
@@ -52,5 +69,11 @@ impl Config {
 
     pub fn vhost_path(&self, domain: &str) -> PathBuf {
         self.nginx_dir.join(format!("{domain}.conf"))
+    }
+
+    /// Cache directory for one site. The name doubles as the Nginx zone name,
+    /// so it must be a valid identifier: dots become underscores.
+    pub fn cache_dir(&self, domain: &str) -> PathBuf {
+        self.cache_root.join(domain.replace('.', "_"))
     }
 }

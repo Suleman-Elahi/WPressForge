@@ -26,6 +26,11 @@ lint:
 test:
     cargo test --workspace
 
+# Validate generated vhosts against the nginx installed on THIS machine.
+# Run on every OS you intend to support.
+test-nginx:
+    cargo test -p wp-agent -- --ignored --nocapture nginx_accepts
+
 release:
     cargo build --release --workspace
 

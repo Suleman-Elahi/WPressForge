@@ -3,12 +3,13 @@
 
 use crate::config::Config;
 use crate::exec;
+use crate::ops::webserver::WebServer;
 use crate::store::Store;
 use std::collections::BTreeMap;
 use wp_common::models::{PhpUsage, ServerMetrics, ServiceHealth};
 use wp_common::Result;
 
-pub async fn collect(config: &Config, store: &Store) -> Result<ServerMetrics> {
+pub async fn collect(config: &Config, store: &Store, web: &WebServer) -> Result<ServerMetrics> {
     let sites = store.all().await;
 
     let mut php_counts: BTreeMap<String, u32> = BTreeMap::new();
@@ -39,7 +40,7 @@ pub async fn collect(config: &Config, store: &Store) -> Result<ServerMetrics> {
         load_1m: load_average().await,
         sites: sites.len() as u32,
         containers: crate::ops::docker::container_count(config).await.unwrap_or(0),
-        services: services(config).await,
+        services: services(web).await,
         php_versions,
     })
 }
@@ -116,9 +117,20 @@ async fn disk(config: &Config) -> (f32, u64) {
     (percent, size)
 }
 
-async fn services(_config: &Config) -> Vec<ServiceHealth> {
+async fn services(web: &WebServer) -> Vec<ServiceHealth> {
     let mut health = Vec::new();
-    for unit in ["nginx", "docker", "mariadb"] {
+
+    // The web server reports its detected version so the panel can warn about
+    // hosts too old for HTTP/3 or brotli.
+    health.push(ServiceHealth {
+        name: web.kind().to_string(),
+        healthy: exec::run(false, "systemctl", &["is-active", "--quiet", web.kind()])
+            .await
+            .is_ok(),
+        detail: Some(web.version_label()),
+    });
+
+    for unit in ["docker", "mariadb"] {
         // Read-only probe: always executed, even in dry-run, so the panel sees
         // the real service state.
         let ok = exec::run(false, "systemctl", &["is-active", "--quiet", unit])

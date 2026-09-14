@@ -5,10 +5,15 @@
 //! the web layer never sees SQL types.
 
 pub mod audit;
+pub mod destinations;
 pub mod jobs;
+pub mod metrics;
+pub mod notifications;
+pub mod schedules;
 pub mod seed;
 pub mod servers;
 pub mod sites;
+pub mod tokens;
 pub mod users;
 
 use anyhow::Context;

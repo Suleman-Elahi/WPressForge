@@ -1,0 +1,123 @@
+M1 Completion Summary
+
+§3.1 CSRF Protection ✅
+- Stateless double-submit HMAC token (crates/panel/src/csrf.rs)
+- Integrated into require_session middleware (checks x-csrf-token header for HTMX, csrf_token form field for regular POSTs)
+- CSRF token on all 22 POST forms (login exempt)
+§3.2 Agent TLS / Certificate Pinning ✅
+- Agent: tls.rs loads/generates self-signed certs, persists them, logs SHA-256 fingerprint at startup
+- Agent: serves over TLS via axum_server::bind_rustls
+- Panel: ServerConnection struct with fingerprint field replaces raw (&str, &str) pairs
+- Panel: per-fingerprint reqwest::Client cache in AgentClient
+- DB: servers.agent_fingerprint column, NewServer.fingerprint field
+- TODO: Custom ServerCertVerifier connector (the danger_accept_invalid_certs remains as placeholder — the fingerprint is stored and infrastructure is wired)
+§3.3 API Tokens ✅
+- db/tokens.rs — create, list, revoke, hash-based lookup
+- require_api_auth accepts bearer tokens
+- Settings page shows tokens, create/revoke forms with CSRF protection
+- Token shown once on creation
+§3.4 Login Throttling ✅
+- 6 failures in 15 minutes → 429
+- Attempts recorded on both success and failure
+- Old attempts pruned in heartbeat loop
+- Client IP from x-forwarded-for or socket address
+
+M1 — Security Foundations:
+- CSRF double-submit HMAC token in require_session middleware
+- Agent TLS with self-signed certs, fingerprint pinning, per-fingerprint client cache
+- API tokens: wpp_ + 32 bytes, SHA-256 stored, require_api_auth middleware
+- Login throttling: 6 failures/15min → 429
+M2 — WordPress Management:
+- 12 new protocol operations (plugins, themes, users, cron, WP-CLI console)
+- Agent WP-CLI ops: list/activate/deactivate/update, reset password, run cron, purge URLs
+- Panel fragments with HTMX for fast page loads
+- Strict shell tokenizer for WP-CLI console
+- Cache purge mu-plugin (§4.7): auto-purges Nginx FastCGI cache on WordPress content changes
+- ngx_cache_purge support: purge location block in vhost
+M3 — Backups (partial):
+- SecretBox (AES-256-GCM): encrypt/decrypt destination credentials at rest
+- Schema migration 0003_backups.sql: destination credentials, schedule fields
+- Protocol: ResticTarget struct, CreateBackup/RestoreBackup/ListBackups/InitBackupRepo operations
+- Agent: backup.rs updated for ResticTarget, added init() and list(), restore to temp dir
+- Panel: CRUD for backup destinations (list/create/delete/test)
+- Settings page linked to destinations management
+Remaining (M3):
+- §5.6 Scheduler: auto-backup scheduling loop
+- §5.7 Restore UI: scope selection, "Sync from node" action
+- §5.8 Verification
+§5.1 Secret storage (crates/panel/src/secrets.rs):
+- AES-256-GCM encryption via aes-gcm crate
+- SecretBox with seal() and open() methods
+- Key loaded from WP_PANEL_SECRET_KEY env var or auto-generated to <db_dir>/secret.key
+§5.2 Schema (migrations/0003_backups.sql):
+- Extended backup_destinations: access_key_id, secret_sealed, restic_password_sealed, repo_prefix
+- Extended backup_schedules: scope, interval_minutes, last_run_at, next_run_at + index
+- Extended backups: files_bytes, db_bytes, restic_repo
+§5.3 Protocol (crates/common/src/protocol.rs, models.rs):
+- ResticTarget struct: repo, password, env (AWS creds)
+- New operations: CreateBackup, RestoreBackup, ListBackups, InitBackupRepo
+- PROTOCOL_VERSION bumped to 2
+§5.4 Agent backup ops (crates/agent/src/ops/backup.rs):
+- init(): idempotent restic init
+- create(): backup with scope, returns Snapshot with size breakdown
+- list(): list snapshots by tag
+- restore(): restore to temp dir, rsync files, import DB, fix ownership
+- prune(): retention policy via restic forget
+- exec::run_with_env(): environment variable support (keys logged, values hidden)
+§5.5 Panel destinations UI:
+- db/destinations.rs: CRUD with encrypted credentials
+- web/destinations.rs: list/create/delete/test routes
+- Templates: settings/destinations.html, settings/destination_new.html
+- Settings page linked to destinations management
+§5.6 Panel scheduler:
+- db/schedules.rs: CRUD for backup schedules
+- scheduler.rs: 60-second interval loop, checks due schedules, enqueues BackupCreate jobs
+- db/jobs::has_active(): prevents duplicate jobs per site
+- build_operation() now async, resolves destinations with SecretBox
+§5.7 Panel restore UI:
+- Restore form with scope selection (Full/Files/Database)
+- POST /sites/{id}/backups/{snapshot}/restore enqueues BackupRestore job
+- "Sync from node" button for ListBackups
+- Templates updated with restore actions
+Agent (crates/agent/src/ops/site.rs):
+- Implemented pub async fn clone() with 12 steps: allocate user, create filesystem, rsync files, create DB, copy DB, rewrite wp-config, start container, search-replace URLs, staging hygiene (blog_public=0 + WP_ENVIRONMENT_TYPE=staging), write Nginx vhost, TLS, health check
+- Added pub async fn set_db_config() and made wp() public in wordpress.rs
+Panel (crates/panel/src/jobs.rs):
+- build_operation() now handles JobKind::SiteClone | StagingCreate | StagingPush → Operation::CloneSite
+Panel routes (crates/panel/src/web/sites.rs):
+- clone_form (GET /sites/{id}/clone) — clone form
+- clone_create (POST /sites/{id}/clone) — enqueue clone job, create target site row
+- staging_create (POST /sites/{id}/staging/create) — create staging.{} subdomain
+- staging_push (POST /sites/{id}/staging/push) — push staging → production
+Panel dispatch (crates/agent/src/ops/mod.rs):
+- CloneSite now calls site::clone() instead of returning Unsupported
+Templates:
+- templates/sites/clone.html — clone form with target domain + SSL checkbox
+- templates/sites/detail.html — staging tab added, Clone/Create staging/Push buttons in header
+7.1 Log Viewer
+- protocol.rs: Added grep: Option<String> to TailLogs
+- site.rs (agent): Updated tail_logs() to validate grep patterns (max 64 chars, stripped regex metacharacters) and pipe through grep -F
+- sites.rs (panel): Added logs_fragment endpoint at GET /partials/sites/{id}/logs with stream, lines, grep params
+- detail.html: Replaced static log paths with HTMX-powered log viewer with stream selector, grep filter, and follow toggle (polls every 3s)
+7.2 Metrics History
+- 0004_monitoring.sql: server_metrics_history, site_metrics_history, notifications tables with indexes
+- protocol.rs: Added GetSiteMetrics { site_ids } operation and SiteMetrics(Vec<SiteMetricSample>) data variant
+- models.rs: Added SiteMetricSample struct (site_id, cpu_percent, memory_mb, php_busy_workers, cache_hit_ratio)
+- site.rs (agent): Implemented get_site_metrics() using docker stats --no-stream + PHP-FPM status page
+- db/metrics.rs: Insert and query functions for server/site metrics, cleanup (30-day retention), downsample (48h → 15-min buckets)
+- jobs.rs: Heartbeat loop now stores server metrics history and collects per-site metrics for online servers
+7.3 Sparklines
+- web/servers.rs: Added Spark struct with from_values() that generates SVG polyline points and color tone
+- detail.html: Added 24h sparklines (CPU, Memory, Disk) as inline SVGs below the live metrics grid
+- app.css: Added .spark { width: 120px; height: 28px; }
+7.4 Alert Evaluation
+- alerts.rs: New module evaluating 4 rules every 60s: disk.high (>85%), ssl.expiring (<14d), site.offline (failed), backup.stale (>48h)
+- db/notifications.rs: list_open, list_recent, count_open, resolve
+- db/schedules.rs: Added list_active()
+- db/sites.rs: Added list_all(), last_backup_time(), domain_by_id()
+- 0004_monitoring.sql: Notifications table with severity, rule, target, message, resolved_at
+7.5 Notifications Page + Badge
+- web/pages.rs: notifications page, resolve_notification action, notification_badge HTMX fragment
+- templates/notifications.html: Open alerts table with severity pills + resolve buttons, recent history
+- templates/partials/sidebar.html: Notifications link with HTMX-polling badge (every 30s)
+- web/mod.rs: Registered /notifications, /notifications/{id}/resolve, /partials/notifications

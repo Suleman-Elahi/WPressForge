@@ -1,0 +1,27 @@
+{% if let Some(e) = error %}
+<div class="banner warn">{{ e }}</div>
+{% elif events.is_empty() %}
+<div class="empty"><p>No cron events found.</p></div>
+{% else %}
+<div class="table-wrap">
+  <table class="data stack">
+    <thead><tr><th>Hook</th><th>Next run</th><th>Schedule</th><th></th></tr></thead>
+    <tbody>
+    {% for e in events %}
+      <tr>
+        <td data-label="Hook"><span class="mono">{{ e.hook }}</span></td>
+        <td data-label="Next run">{{ e.next_run_relative }}</td>
+        <td data-label="Schedule">{{ e.schedule }}</td>
+        <td class="actions">
+          <form class="inline-form" method="post" action="/sites/{{ site.site.id }}/cron/run">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="hook" value="{{ e.hook }}">
+            <button class="btn sm" type="submit">Run now</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}

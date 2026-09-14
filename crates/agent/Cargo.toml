@@ -14,7 +14,12 @@ wp-common = { workspace = true }
 
 tokio = { workspace = true }
 axum = { workspace = true }
+axum-server = { version = "0.7", features = ["tls-rustls"] }
 tower-http = { workspace = true }
+
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rustls-pemfile = "2"
+rcgen = "0.13"
 
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -27,3 +32,6 @@ tracing-subscriber = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
 rand = { workspace = true }
+sha2 = { workspace = true }
+base64 = { workspace = true }
+hostname = "0.4"

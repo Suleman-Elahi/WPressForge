@@ -10,6 +10,17 @@ pub struct ServerRow {
     pub metrics: ServerMetrics,
     pub site_count: i64,
     pub agent_token: String,
+    pub agent_fingerprint: Option<String>,
+}
+
+impl ServerRow {
+    pub fn connection(&self) -> crate::agent::ServerConnection {
+        crate::agent::ServerConnection {
+            url: self.server.agent_url.clone(),
+            token: self.agent_token.clone(),
+            fingerprint: self.agent_fingerprint.clone(),
+        }
+    }
 }
 
 fn status(raw: &str) -> ServerStatus {
@@ -44,6 +55,7 @@ fn map(row: &sqlx::sqlite::SqliteRow) -> ServerRow {
         metrics,
         site_count: row.try_get("site_count").unwrap_or(0),
         agent_token: row.try_get("agent_token").unwrap_or_default(),
+        agent_fingerprint: row.try_get("agent_fingerprint").ok().flatten(),
     }
 }
 
@@ -76,12 +88,13 @@ pub struct NewServer<'a> {
     pub ip_address: &'a str,
     pub provider: Option<&'a str>,
     pub region: Option<&'a str>,
+    pub agent_fingerprint: Option<&'a str>,
 }
 
 pub async fn create(db: &Db, new: NewServer<'_>) -> sqlx::Result<i64> {
     let row = sqlx::query(
-        "INSERT INTO servers (name, agent_url, agent_token, hostname, ip_address, provider, region, status, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'provisioning', ?8) RETURNING id",
+        "INSERT INTO servers (name, agent_url, agent_token, hostname, ip_address, provider, region, agent_fingerprint, status, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'provisioning', ?9) RETURNING id",
     )
     .bind(new.name)
     .bind(new.agent_url)
@@ -90,6 +103,7 @@ pub async fn create(db: &Db, new: NewServer<'_>) -> sqlx::Result<i64> {
     .bind(new.ip_address)
     .bind(new.provider)
     .bind(new.region)
+    .bind(new.agent_fingerprint)
     .bind(super::now_string())
     .fetch_one(db)
     .await?;

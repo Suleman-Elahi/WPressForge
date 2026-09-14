@@ -14,6 +14,7 @@
     <a class="btn" href="/sites/new">New site here</a>
     <form class="inline-form" method="post" action="/servers/{{ server.server.id }}/delete"
           data-confirm="Detach {{ server.server.name }} from the panel?">
+      <input type="hidden" name="csrf_token" value="{{ chrome.csrf_token }}">
       <button class="btn danger" type="submit">Detach</button>
     </form>
   </div>
@@ -22,6 +23,38 @@
 <div hx-get="/partials/servers/{{ server.server.id }}/metrics" hx-trigger="load, every 10s" hx-swap="innerHTML">
   {% include "servers/metrics.html" %}
 </div>
+
+{% if !cpu_spark.points.is_empty() %}
+<div class="grid stats" style="margin-top:0.5rem">
+  <div class="stat" style="display:flex;align-items:center;gap:.5rem">
+    <div>
+      <div class="label">CPU 24h</div>
+      <div class="value">{{ cpu_spark.last }}%</div>
+    </div>
+    <svg viewBox="0 0 120 28" class="spark" role="img" aria-label="CPU, last 24 hours" style="color:var(--{% if cpu_spark.tone == "bad" %}danger{% else if cpu_spark.tone == "warn" %}warn{% else %}accent{% endif %})">
+      <polyline points="{{ cpu_spark.points }}" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    </svg>
+  </div>
+  <div class="stat" style="display:flex;align-items:center;gap:.5rem">
+    <div>
+      <div class="label">Memory 24h</div>
+      <div class="value">{{ memory_spark.last }}%</div>
+    </div>
+    <svg viewBox="0 0 120 28" class="spark" role="img" aria-label="Memory, last 24 hours" style="color:var(--{% if memory_spark.tone == "bad" %}danger{% else if memory_spark.tone == "warn" %}warn{% else %}accent{% endif %})">
+      <polyline points="{{ memory_spark.points }}" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    </svg>
+  </div>
+  <div class="stat" style="display:flex;align-items:center;gap:.5rem">
+    <div>
+      <div class="label">Disk 24h</div>
+      <div class="value">{{ disk_spark.last }}%</div>
+    </div>
+    <svg viewBox="0 0 120 28" class="spark" role="img" aria-label="Disk, last 24 hours" style="color:var(--{% if disk_spark.tone == "bad" %}danger{% else if disk_spark.tone == "warn" %}warn{% else %}accent{% endif %})">
+      <polyline points="{{ disk_spark.points }}" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    </svg>
+  </div>
+</div>
+{% endif %}
 
 <div class="grid two">
   <section class="card">

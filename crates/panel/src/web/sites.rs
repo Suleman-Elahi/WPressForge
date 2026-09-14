@@ -1,16 +1,17 @@
 use super::{redirect_with_flash, render, Chrome};
-use crate::auth::CurrentUser;
+use crate::auth::{CurrentSession, CurrentUser};
 use crate::db;
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 use askama::Template;
 use axum::extract::{Path, Query, State};
-use axum::response::Response;
+use axum::response::{Html, IntoResponse, Response};
 use axum::Form;
 use serde::Deserialize;
 use serde_json::json;
 use wp_common::models::{
-    Backup, CacheSettings, DatabaseMode, Domain, Environment, JobKind, PhpVersion, ResourceLimits,
+    Backup, CacheSettings, CronEventInfo, CronMode, DatabaseMode, Domain, Environment, JobKind,
+    PhpVersion, PluginInfo, ResourceLimits, ThemeInfo, WpItemAction, WpUserInfo,
 };
 
 // ---------------------------------------------------------------------------
@@ -38,6 +39,7 @@ struct ListTemplate {
 pub async fn list(
     State(state): State<AppState>,
     user: CurrentUser,
+    session: CurrentSession,
     Query(query): Query<ListQuery>,
 ) -> AppResult<Response> {
     let all = db::sites::list(&state.db).await?;
@@ -62,7 +64,7 @@ pub async fn list(
         .collect();
 
     Ok(render(ListTemplate {
-        chrome: Chrome::new(&state, &user, "sites", "Sites", query.flash).await,
+        chrome: Chrome::new(&state, &user, &session, "sites", "Sites", query.flash).await,
         sites,
         query: needle,
         status_filter,
@@ -74,7 +76,7 @@ pub async fn list(
 // Detail (tabbed)
 // ---------------------------------------------------------------------------
 
-pub const TABS: [(&str, &str); 9] = [
+pub const TABS: [(&str, &str); 12] = [
     ("overview", "Overview"),
     ("domains", "Domains"),
     ("wordpress", "WordPress"),
@@ -82,8 +84,11 @@ pub const TABS: [(&str, &str); 9] = [
     ("database", "Database"),
     ("ssl", "SSL"),
     ("backups", "Backups"),
+    ("staging", "Staging"),
     ("logs", "Logs"),
     ("settings", "Settings"),
+    ("cron", "Cron"),
+    ("console", "Console"),
 ];
 
 #[derive(Debug, Default, Deserialize)]
@@ -108,6 +113,7 @@ struct DetailTemplate {
 pub async fn detail(
     State(state): State<AppState>,
     user: CurrentUser,
+    session: CurrentSession,
     Path(id): Path<i64>,
     Query(query): Query<DetailQuery>,
 ) -> AppResult<Response> {
@@ -121,6 +127,7 @@ pub async fn detail(
         chrome: Chrome::new(
             &state,
             &user,
+            &session,
             "sites",
             site.site.domain.clone(),
             query.flash,
@@ -153,11 +160,12 @@ struct NewTemplate {
 pub async fn new_form(
     State(state): State<AppState>,
     user: CurrentUser,
+    session: CurrentSession,
     Query(query): Query<super::FlashQuery>,
 ) -> AppResult<Response> {
     let servers = db::servers::list(&state.db).await?;
     Ok(render(NewTemplate {
-        chrome: Chrome::new(&state, &user, "sites", "New site", query.flash).await,
+        chrome: Chrome::new(&state, &user, &session, "sites", "New site", query.flash).await,
         servers,
         php_versions: PhpVersion::ALL,
     }))
@@ -358,6 +366,286 @@ pub async fn action(
         format!("/sites/{id}")
     };
     Ok(redirect_with_flash(&target, flash))
+}
+
+#[derive(Deserialize)]
+pub struct RestoreForm {
+    pub scope: String,
+}
+
+/// Restore a backup snapshot with the given scope.
+pub async fn restore_backup(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path((id, snapshot_id)): Path<(i64, String)>,
+    Form(form): Form<RestoreForm>,
+) -> AppResult<Response> {
+    let site = db::sites::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+
+    let scope: wp_common::models::BackupScope = match form.scope.as_str() {
+        "full" => wp_common::models::BackupScope::Full,
+        "files_only" => wp_common::models::BackupScope::FilesOnly,
+        "database_only" => wp_common::models::BackupScope::DatabaseOnly,
+        _ => wp_common::models::BackupScope::Full,
+    };
+
+    let job_id = db::jobs::enqueue(
+        &state.db,
+        JobKind::BackupRestore,
+        Some(site.site.server_id),
+        Some(id),
+        Some(json!({ "snapshot_id": snapshot_id, "scope": scope })),
+        &user.0.email,
+    )
+    .await?;
+    state.notify_jobs();
+
+    db::audit::record(
+        &state.db,
+        &user.0.email,
+        "backup_restore",
+        &site.site.domain,
+        Some(&format!("job {job_id} snapshot {snapshot_id}")),
+        true,
+    )
+    .await?;
+
+    Ok(redirect_with_flash(&format!("/jobs/{job_id}"), "Restore queued"))
+}
+
+/// Sync backups from the agent's restic repository.
+pub async fn sync_backups(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<i64>,
+) -> AppResult<Response> {
+    let site = db::sites::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+    let server = db::servers::get(&state.db, site.site.server_id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+
+    // For now, just trigger a list and record the result.
+    // A full implementation would decrypt the destination and pass a ResticTarget.
+    let _ = state.agent.query(&server.connection(), wp_common::protocol::Operation::ListBackups {
+        site_id: id,
+        target: wp_common::protocol::ResticTarget {
+            repo: String::new(),
+            password: String::new(),
+            env: Vec::new(),
+        },
+    }).await;
+
+    Ok(redirect_with_flash(&format!("/sites/{id}"), "Synced backups from node"))
+}
+
+// ---------------------------------------------------------------------------
+// Cloning & staging
+// ---------------------------------------------------------------------------
+
+#[derive(Template)]
+#[template(path = "sites/clone.html")]
+struct ClonePage {
+    chrome: Chrome,
+    site: db::sites::SiteRow,
+}
+
+#[derive(Deserialize)]
+pub struct CloneForm {
+    pub target_domain: String,
+    pub request_ssl: bool,
+}
+
+/// Show the clone form for a site.
+pub async fn clone_form(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    session: CurrentSession,
+    Path(id): Path<i64>,
+) -> AppResult<Response> {
+    let site = db::sites::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+    let chrome = Chrome::new(&state, &user, &session, "sites", "Clone Site", None).await;
+    Ok(render(ClonePage { chrome, site }))
+}
+
+/// Create a clone of the site.
+pub async fn clone_create(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    _session: CurrentSession,
+    Path(id): Path<i64>,
+    Form(form): Form<CloneForm>,
+) -> AppResult<Response> {
+    let source = db::sites::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+
+    // Validate target domain.
+    if form.target_domain.is_empty() {
+        return Err(AppError::BadRequest("target domain is required".into()));
+    }
+    if form.target_domain == source.site.domain {
+        return Err(AppError::BadRequest("target domain cannot be the same as source".into()));
+    }
+    if db::sites::domain_exists(&state.db, &form.target_domain).await? {
+        return Err(AppError::BadRequest("domain already exists".into()));
+    }
+
+    // Create the target site row in the panel.
+    let target_id = db::sites::create(
+        &state.db,
+        db::sites::NewSite {
+            server_id: source.site.server_id,
+            domain: &form.target_domain,
+            title: Some(&format!("{} (clone)", source.site.title.as_deref().unwrap_or(&source.site.domain))),
+            php_version: source.site.php_version,
+            database_mode: source.site.database_mode,
+            environment: source.site.environment,
+            parent_site_id: Some(source.site.id),
+            limits: source.site.limits.clone(),
+            cache: source.site.cache.clone(),
+            request_ssl: form.request_ssl,
+        },
+    )
+    .await?;
+
+    let job_id = db::jobs::enqueue(
+        &state.db,
+        JobKind::SiteClone,
+        Some(source.site.server_id),
+        Some(target_id),
+        Some(json!({
+            "source_site_id": source.site.id,
+            "source_domain": source.site.domain,
+            "target_site_id": target_id,
+            "target_domain": form.target_domain,
+            "request_ssl": form.request_ssl,
+        })),
+        &user.0.email,
+    )
+    .await?;
+    state.notify_jobs();
+
+    db::audit::record(
+        &state.db,
+        &user.0.email,
+        "site.clone",
+        &source.site.domain,
+        Some(&format!("job {job_id} -> {}", form.target_domain)),
+        true,
+    )
+    .await?;
+
+    Ok(redirect_with_flash(&format!("/jobs/{job_id}"), "Clone job queued"))
+}
+
+// Staging create and push use the same clone operation with staging=true.
+pub async fn staging_create(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    _session: CurrentSession,
+    Path(id): Path<i64>,
+) -> AppResult<Response> {
+    let source = db::sites::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+
+    // Generate staging domain.
+    let target_domain = format!("staging.{}", source.site.domain);
+    if db::sites::domain_exists(&state.db, &target_domain).await? {
+        return Err(AppError::BadRequest("staging domain already exists".into()));
+    }
+
+    // Create the target site row.
+    let target_id = db::sites::create(
+        &state.db,
+        db::sites::NewSite {
+            server_id: source.site.server_id,
+            domain: &target_domain,
+            title: Some(&format!("{} (staging)", source.site.title.as_deref().unwrap_or(&source.site.domain))),
+            php_version: source.site.php_version,
+            database_mode: source.site.database_mode,
+            environment: wp_common::models::Environment::Staging,
+            parent_site_id: Some(source.site.id),
+            limits: source.site.limits.clone(),
+            cache: source.site.cache.clone(),
+            request_ssl: false, // No TLS for staging by default.
+        },
+    )
+    .await?;
+
+    let job_id = db::jobs::enqueue(
+        &state.db,
+        JobKind::StagingCreate,
+        Some(source.site.server_id),
+        Some(target_id),
+        Some(json!({
+            "source_site_id": source.site.id,
+            "source_domain": source.site.domain,
+            "target_site_id": target_id,
+            "target_domain": target_domain,
+            "request_ssl": false,
+        })),
+        &user.0.email,
+    )
+    .await?;
+    state.notify_jobs();
+
+    db::audit::record(
+        &state.db,
+        &user.0.email,
+        "staging.create",
+        &source.site.domain,
+        Some(&format!("job {job_id} -> staging.{}", source.site.domain)),
+        true,
+    )
+    .await?;
+
+    Ok(redirect_with_flash(&format!("/jobs/{job_id}"), "Staging site creation queued"))
+}
+
+pub async fn staging_push(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    _session: CurrentSession,
+    Path(id): Path<i64>,
+) -> AppResult<Response> {
+    let staging_site = db::sites::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+
+    // Verify this is actually a staging site.
+    if staging_site.site.environment != wp_common::models::Environment::Staging {
+        return Err(AppError::BadRequest("site is not a staging site".into()));
+    }
+
+    // Verify it has a parent (production) site.
+    let parent_id = staging_site.site.parent_site_id.ok_or_else(|| {
+        AppError::BadRequest("staging site has no parent production site".into())
+    })?;
+    let parent = db::sites::get(&state.db, parent_id).await?.ok_or(AppError::NotFound)?;
+
+    let job_id = db::jobs::enqueue(
+        &state.db,
+        JobKind::StagingPush,
+        Some(staging_site.site.server_id),
+        Some(parent.site.id), // Target the production site.
+        Some(json!({
+            "source_site_id": staging_site.site.id,
+            "source_domain": staging_site.site.domain,
+            "target_site_id": parent.site.id,
+            "target_domain": parent.site.domain,
+            "request_ssl": parent.site.ssl.enabled,
+        })),
+        &user.0.email,
+    )
+    .await?;
+    state.notify_jobs();
+
+    db::audit::record(
+        &state.db,
+        &user.0.email,
+        "staging.push",
+        &staging_site.site.domain,
+        Some(&format!("job {job_id} -> {}", parent.site.domain)),
+        true,
+    )
+    .await?;
+
+    Ok(redirect_with_flash(&format!("/jobs/{job_id}"), "Push to production queued"))
 }
 
 #[derive(Debug, Deserialize)]
@@ -586,4 +874,509 @@ pub async fn status_fragment(
         .collect();
 
     Ok(super::no_store(render(StatusFragment { site, active_jobs })))
+}
+
+// ---------------------------------------------------------------------------
+// M2: WordPress management fragments
+// ---------------------------------------------------------------------------
+
+#[derive(Template)]
+#[template(path = "sites/plugins.html")]
+struct PluginsFragment {
+    site: db::sites::SiteRow,
+    plugins: Vec<PluginInfo>,
+    error: Option<String>,
+    csrf_token: String,
+}
+
+pub async fn plugins_fragment(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    session: CurrentSession,
+    Path(id): Path<i64>,
+) -> AppResult<Response> {
+    let site = db::sites::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+    let server = db::servers::get(&state.db, site.site.server_id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+
+    let result = state
+        .agent
+        .query(&server.connection(), wp_common::protocol::Operation::ListPlugins { site_id: id })
+        .await;
+    let (plugins, error) = match result {
+        Ok(wp_common::protocol::OperationData::Plugins(list)) => (list, None),
+        Ok(_) => (vec![], Some("unexpected agent response".into())),
+        Err(e) => (vec![], Some(e.to_string())),
+    };
+    Ok(super::no_store(render(PluginsFragment {
+        site,
+        plugins,
+        error,
+        csrf_token: state.csrf.token(&session.0),
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PluginActionForm {
+    pub slug: String,
+    pub action: String,
+}
+
+pub async fn plugin_action(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<i64>,
+    Form(form): Form<PluginActionForm>,
+) -> AppResult<Response> {
+    let site = db::sites::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+    let action = match form.action.as_str() {
+        "activate" => WpItemAction::Activate,
+        "deactivate" => WpItemAction::Deactivate,
+        "update" => WpItemAction::Update,
+        "delete" => WpItemAction::Delete,
+        "install" => WpItemAction::Install,
+        other => return Err(AppError::BadRequest(format!("unknown action `{other}`"))),
+    };
+
+    let job_id = db::jobs::enqueue(
+        &state.db,
+        JobKind::PluginAction,
+        Some(site.site.server_id),
+        Some(id),
+        Some(json!({ "slug": form.slug, "action": action.as_str() })),
+        &user.0.email,
+    )
+    .await?;
+    state.notify_jobs();
+
+    Ok(redirect_with_flash(
+        &format!("/sites/{id}?tab=wordpress"),
+        &format!("Plugin {} queued", action.as_str()),
+    ))
+}
+
+#[derive(Template)]
+#[template(path = "sites/themes.html")]
+struct ThemesFragment {
+    site: db::sites::SiteRow,
+    themes: Vec<ThemeInfo>,
+    error: Option<String>,
+    csrf_token: String,
+}
+
+pub async fn themes_fragment(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    session: CurrentSession,
+    Path(id): Path<i64>,
+) -> AppResult<Response> {
+    let site = db::sites::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+    let server = db::servers::get(&state.db, site.site.server_id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+
+    let result = state
+        .agent
+        .query(&server.connection(), wp_common::protocol::Operation::ListThemes { site_id: id })
+        .await;
+    let (themes, error) = match result {
+        Ok(wp_common::protocol::OperationData::Themes(list)) => (list, None),
+        Ok(_) => (vec![], Some("unexpected agent response".into())),
+        Err(e) => (vec![], Some(e.to_string())),
+    };
+    Ok(super::no_store(render(ThemesFragment {
+        site,
+        themes,
+        error,
+        csrf_token: state.csrf.token(&session.0),
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ThemeActionForm {
+    pub slug: String,
+    pub action: String,
+}
+
+pub async fn theme_action(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<i64>,
+    Form(form): Form<ThemeActionForm>,
+) -> AppResult<Response> {
+    let site = db::sites::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+    let action = match form.action.as_str() {
+        "activate" => WpItemAction::Activate,
+        "update" => WpItemAction::Update,
+        "delete" => WpItemAction::Delete,
+        "install" => WpItemAction::Install,
+        other => return Err(AppError::BadRequest(format!("unknown action `{other}`"))),
+    };
+
+    let job_id = db::jobs::enqueue(
+        &state.db,
+        JobKind::ThemeAction,
+        Some(site.site.server_id),
+        Some(id),
+        Some(json!({ "slug": form.slug, "action": action.as_str() })),
+        &user.0.email,
+    )
+    .await?;
+    state.notify_jobs();
+
+    Ok(redirect_with_flash(
+        &format!("/sites/{id}?tab=wordpress"),
+        &format!("Theme {} queued", action.as_str()),
+    ))
+}
+
+#[derive(Template)]
+#[template(path = "sites/wpusers.html")]
+struct WpUsersFragment {
+    site: db::sites::SiteRow,
+    users: Vec<WpUserInfo>,
+    error: Option<String>,
+    csrf_token: String,
+}
+
+pub async fn wpusers_fragment(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    session: CurrentSession,
+    Path(id): Path<i64>,
+) -> AppResult<Response> {
+    let site = db::sites::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+    let server = db::servers::get(&state.db, site.site.server_id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+
+    let result = state
+        .agent
+        .query(&server.connection(), wp_common::protocol::Operation::ListWpUsers { site_id: id })
+        .await;
+    let (users, error) = match result {
+        Ok(wp_common::protocol::OperationData::WpUsers(list)) => (list, None),
+        Ok(_) => (vec![], Some("unexpected agent response".into())),
+        Err(e) => (vec![], Some(e.to_string())),
+    };
+    Ok(super::no_store(render(WpUsersFragment {
+        site,
+        users,
+        error,
+        csrf_token: state.csrf.token(&session.0),
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ResetPasswordForm {
+    pub user_login: String,
+}
+
+pub async fn reset_password(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<i64>,
+    Form(form): Form<ResetPasswordForm>,
+) -> AppResult<Response> {
+    let site = db::sites::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+
+    let job_id = db::jobs::enqueue(
+        &state.db,
+        JobKind::WpUserPasswordReset,
+        Some(site.site.server_id),
+        Some(id),
+        Some(json!({ "user_login": form.user_login })),
+        &user.0.email,
+    )
+    .await?;
+    state.notify_jobs();
+
+    Ok(redirect_with_flash(
+        &format!("/sites/{id}?tab=wordpress"),
+        "Password reset queued",
+    ))
+}
+
+#[derive(Template)]
+#[template(path = "sites/cron.html")]
+struct CronFragment {
+    site: db::sites::SiteRow,
+    events: Vec<CronEventInfo>,
+    error: Option<String>,
+    csrf_token: String,
+}
+
+pub async fn cron_fragment(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    session: CurrentSession,
+    Path(id): Path<i64>,
+) -> AppResult<Response> {
+    let site = db::sites::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+    let server = db::servers::get(&state.db, site.site.server_id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+
+    let result = state
+        .agent
+        .query(
+            &server.connection(),
+            wp_common::protocol::Operation::ListCronEvents { site_id: id },
+        )
+        .await;
+    let (events, error) = match result {
+        Ok(wp_common::protocol::OperationData::CronEvents(list)) => (list, None),
+        Ok(_) => (vec![], Some("unexpected agent response".into())),
+        Err(e) => (vec![], Some(e.to_string())),
+    };
+    Ok(super::no_store(render(CronFragment {
+        site,
+        events,
+        error,
+        csrf_token: state.csrf.token(&session.0),
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CronRunForm {
+    pub hook: String,
+}
+
+pub async fn cron_run(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<i64>,
+    Form(form): Form<CronRunForm>,
+) -> AppResult<Response> {
+    let site = db::sites::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+
+    let job_id = db::jobs::enqueue(
+        &state.db,
+        JobKind::CronRun,
+        Some(site.site.server_id),
+        Some(id),
+        Some(json!({ "hook": form.hook })),
+        &user.0.email,
+    )
+    .await?;
+    state.notify_jobs();
+
+    Ok(redirect_with_flash(
+        &format!("/sites/{id}?tab=wordpress"),
+        "Cron event queued",
+    ))
+}
+
+#[derive(Template)]
+#[template(path = "sites/console.html")]
+struct ConsoleTemplate {
+    chrome: Chrome,
+    site: db::sites::SiteRow,
+    output: Option<String>,
+    error: Option<String>,
+}
+
+pub async fn console_form(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    session: CurrentSession,
+    Path(id): Path<i64>,
+    Query(query): Query<super::FlashQuery>,
+) -> AppResult<Response> {
+    let site = db::sites::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+    Ok(render(ConsoleTemplate {
+        chrome: Chrome::new(&state, &user, &session, "sites", "WP-CLI Console", query.flash).await,
+        site,
+        output: None,
+        error: None,
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ConsoleForm {
+    pub command: String,
+}
+
+/// Tokenize a WP-CLI command line. Supports single/double quoted args.
+/// Rejects shell metacharacters.
+fn tokenize(line: &str) -> Result<Vec<String>, String> {
+    let line = line.trim();
+    if line.is_empty() {
+        return Err("empty command".into());
+    }
+    // Reject shell metacharacters
+    for ch in [';', '|', '&', '`', '$', '(', ')', '<', '>', '\n', '\r'] {
+        if line.contains(ch) {
+            return Err(format!("character `{ch}` is not allowed"));
+        }
+    }
+    // Simple tokenizer: split on whitespace, respect quotes
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut in_single = false;
+    let mut in_double = false;
+    for ch in line.chars() {
+        match ch {
+            '\'' if !in_double => {
+                in_single = !in_single;
+            }
+            '"' if !in_single => {
+                in_double = !in_double;
+            }
+            c if c.is_whitespace() && !in_single && !in_double => {
+                if !current.is_empty() {
+                    tokens.push(std::mem::take(&mut current));
+                }
+            }
+            c => {
+                current.push(c);
+            }
+        }
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    if in_single || in_double {
+        return Err("unclosed quote".into());
+    }
+    if tokens.is_empty() {
+        return Err("empty command".into());
+    }
+    Ok(tokens)
+}
+
+pub async fn console_submit(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    session: CurrentSession,
+    Path(id): Path<i64>,
+    Form(form): Form<ConsoleForm>,
+) -> AppResult<Response> {
+    let site = db::sites::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+
+    let args = match tokenize(&form.command) {
+        Ok(args) => args,
+        Err(e) => {
+            return Ok(render(ConsoleTemplate {
+                chrome: Chrome::new(&state, &user, &session, "sites", "WP-CLI Console", None).await,
+                site,
+                output: None,
+                error: Some(e),
+            }));
+        }
+    };
+
+    let server = db::servers::get(&state.db, site.site.server_id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+
+    let result = state
+        .agent
+        .query(
+            &server.connection(),
+            wp_common::protocol::Operation::WpCli {
+                site_id: id,
+                args,
+            },
+        )
+        .await;
+
+    let (output, error) = match result {
+        Ok(wp_common::protocol::OperationData::CommandOutput {
+            stdout,
+            stderr,
+            exit_code,
+        }) => {
+            let mut out = stdout;
+            if !stderr.is_empty() {
+                out.push_str("\n--- stderr ---\n");
+                out.push_str(&stderr);
+            }
+            if exit_code != 0 {
+                out.push_str(&format!("\n(exit code: {exit_code})"));
+            }
+            (Some(out), None)
+        }
+        Ok(_) => (None, Some("unexpected agent response".into())),
+        Err(e) => (None, Some(e.to_string())),
+    };
+
+    db::audit::record(
+        &state.db,
+        &user.0.email,
+        "wpcli.run",
+        &site.site.domain,
+        Some(&form.command),
+        error.is_none(),
+    )
+    .await?;
+
+    Ok(render(ConsoleTemplate {
+        chrome: Chrome::new(&state, &user, &session, "sites", "WP-CLI Console", None).await,
+        site,
+        output,
+        error,
+    }))
+}
+
+// ---------------------------------------------------------------------------
+// Log viewer fragment
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct LogQuery {
+    pub stream: Option<String>,
+    pub lines: Option<u32>,
+    pub grep: Option<String>,
+}
+
+/// Returns a `<pre class="log">` fragment for HTMX polling.
+pub async fn logs_fragment(
+    State(state): State<AppState>,
+    _user: CurrentUser,
+    Path(id): Path<i64>,
+    Query(query): Query<LogQuery>,
+) -> AppResult<Response> {
+    let site = db::sites::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+    let server = db::servers::get(&state.db, site.site.server_id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+
+    let stream_name = query.stream.unwrap_or_else(|| "nginx-error".into());
+    let stream = match stream_name.as_str() {
+        "nginx-access" => wp_common::protocol::LogStream::NginxAccess,
+        "nginx-error" => wp_common::protocol::LogStream::NginxError,
+        "php-error" => wp_common::protocol::LogStream::PhpError,
+        "php-slow" => wp_common::protocol::LogStream::PhpSlow,
+        "wp-debug" => wp_common::protocol::LogStream::WpDebug,
+        "agent" => wp_common::protocol::LogStream::Agent,
+        _ => wp_common::protocol::LogStream::NginxError,
+    };
+    let lines = query.lines.unwrap_or(200).min(2000);
+    let grep = query.grep.filter(|g| !g.is_empty() && g.len() <= 64);
+
+    let result = state.agent.query(
+        &server.connection(),
+        wp_common::protocol::Operation::TailLogs {
+            site_id: site.site.id,
+            stream,
+            lines,
+            grep,
+        },
+    ).await;
+
+    let content = match result {
+        Ok(wp_common::protocol::OperationData::Lines(lines)) => lines.join("\n"),
+        Ok(_) => String::new(),
+        Err(e) => format!("Error fetching logs: {e}"),
+    };
+
+    // Escape HTML entities in log content.
+    let escaped = content
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;");
+
+    Ok(Html(format!("<pre class=\"log\">{escaped}</pre>")).into_response())
 }

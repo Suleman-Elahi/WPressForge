@@ -152,6 +152,18 @@ pub async fn count_active(db: &Db) -> sqlx::Result<i64> {
         .await
 }
 
+/// Check if there's an active (queued or running) job of the given kind for a site.
+pub async fn has_active(db: &Db, site_id: i64, kind: JobKind) -> sqlx::Result<bool> {
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM jobs WHERE site_id = ?1 AND kind = ?2 AND status IN ('queued','running')",
+    )
+    .bind(site_id)
+    .bind(kind.as_str())
+    .fetch_one(db)
+    .await?;
+    Ok(count > 0)
+}
+
 pub async fn progress(db: &Db, id: i64, progress: u8, message: &str) -> sqlx::Result<()> {
     sqlx::query("UPDATE jobs SET progress = ?2, message = ?3 WHERE id = ?1")
         .bind(id)

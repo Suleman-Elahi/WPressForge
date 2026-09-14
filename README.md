@@ -1,4 +1,4 @@
-# WP Panel
+z# WP Panel
 
 Open-source control plane for hosting WordPress on your own Linux servers.
 Rust + Axum + Askama + HTMX for the panel, a Rust daemon on each node, and
@@ -92,6 +92,14 @@ read-only rootfs, and either a private schema or a dedicated MariaDB container.
 **PHP switches avoid downtime.** New container up, health-checked, Nginx
 upstream moved, traffic verified, old container removed.
 
+**Generated config matches the host.** The agent probes `nginx -V` at startup and
+renders only directives the installed binary understands: `http2 on;` on 1.25.1+
+and the `listen ... http2` parameter below it, HTTP/3 only with
+`--with-http_v3_module`, brotli only with `ngx_brotli` (otherwise `gzip_static`).
+`just test-nginx` renders both dialects and runs `nginx -t` against the Nginx on
+your machine. Nginx is the only supported web server; the reasoning, including why
+OpenLiteSpeed and LSCache are not adopted, is in the plan document §9.5.
+
 **The UI is fast because it does very little.** One stylesheet, no webfonts, no
 framework, no client-side router. HTMX polls only the fragments that change
 (job progress, site status, server metrics), Brotli/gzip on responses, and
@@ -104,9 +112,15 @@ Working today: authentication and sessions, servers, sites, per-site tabs,
 domains, cache settings, resource limits, jobs with live progress and step
 timelines, audit log, JSON API, and the agent operations behind them.
 
-Next milestones, in order: real WP-CLI plugin/theme management, backup
-destinations and restore, staging and cloning, migration import, then
-multi-server provisioning. See the architecture document for the full plan.
+Next milestones, in order: security foundations (CSRF, agent certificate
+pinning, API tokens), WordPress management (plugins/themes/cron/WP-CLI), backups
+with destinations and restore, staging and cloning, logs and monitoring, then
+importing existing sites.
+
+The build plan for those milestones — file-by-file changes, migration SQL,
+protocol additions, pseudocode and per-milestone verification commands — is in
+[`docs/IMPLEMENTATION-PLAN.md`](./docs/IMPLEMENTATION-PLAN.md). Start with §2
+(conventions) before writing code.
 
 ## License
 

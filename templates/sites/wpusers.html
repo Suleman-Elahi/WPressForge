@@ -1,0 +1,28 @@
+{% if let Some(e) = error %}
+<div class="banner warn">{{ e }}</div>
+{% elif users.is_empty() %}
+<div class="empty"><p>No WordPress users found.</p></div>
+{% else %}
+<div class="table-wrap">
+  <table class="data stack">
+    <thead><tr><th>Login</th><th>Email</th><th>Role</th><th></th></tr></thead>
+    <tbody>
+    {% for u in users %}
+      <tr>
+        <td data-label="Login"><strong>{{ u.login }}</strong></td>
+        <td data-label="Email">{{ u.email }}</td>
+        <td data-label="Role"><span class="tag">{{ u.role }}</span></td>
+        <td class="actions">
+          <form class="inline-form" method="post" action="/sites/{{ site.site.id }}/wpusers/reset-password"
+                data-confirm="Reset password for {{ u.login }}?">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="user_login" value="{{ u.login }}">
+            <button class="btn sm" type="submit">Reset password</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}

@@ -16,20 +16,38 @@
   <div class="spacer"></div>
   <div class="btn-row">
     <form class="inline-form" method="post" action="/sites/{{ site.site.id }}/actions/clear-cache">
+      <input type="hidden" name="csrf_token" value="{{ chrome.csrf_token }}">
       <button class="btn sm" type="submit">Clear cache</button>
     </form>
     <form class="inline-form" method="post" action="/sites/{{ site.site.id }}/actions/backup">
+      <input type="hidden" name="csrf_token" value="{{ chrome.csrf_token }}">
       <button class="btn sm" type="submit">Back up</button>
     </form>
+    <a class="btn sm" href="/sites/{{ site.site.id }}/clone">Clone</a>
+    {% if !site.site.is_staging() %}
+    <form class="inline-form" method="post" action="/sites/{{ site.site.id }}/staging/create">
+      <input type="hidden" name="csrf_token" value="{{ chrome.csrf_token }}">
+      <button class="btn sm" type="submit">Create staging</button>
+    </form>
+    {% endif %}
+    {% if site.site.is_staging() %}
+    <form class="inline-form" method="post" action="/sites/{{ site.site.id }}/staging/push">
+      <input type="hidden" name="csrf_token" value="{{ chrome.csrf_token }}">
+      <button class="btn sm" type="submit">Push to production</button>
+    </form>
+    {% endif %}
     {% if site.site.is_running() %}
     <form class="inline-form" method="post" action="/sites/{{ site.site.id }}/actions/restart">
+      <input type="hidden" name="csrf_token" value="{{ chrome.csrf_token }}">
       <button class="btn sm" type="submit">Restart</button>
     </form>
     <form class="inline-form" method="post" action="/sites/{{ site.site.id }}/actions/stop">
+      <input type="hidden" name="csrf_token" value="{{ chrome.csrf_token }}">
       <button class="btn sm" type="submit">Stop</button>
     </form>
     {% else %}
     <form class="inline-form" method="post" action="/sites/{{ site.site.id }}/actions/start">
+      <input type="hidden" name="csrf_token" value="{{ chrome.csrf_token }}">
       <button class="btn sm primary" type="submit">Start</button>
     </form>
     {% endif %}
@@ -115,6 +133,7 @@
               {% if !domain.primary %}
               <form class="inline-form" method="post" action="/sites/{{ site.site.id }}/domains/remove"
                     data-confirm="Remove {{ domain.name }} from this site?">
+                <input type="hidden" name="csrf_token" value="{{ chrome.csrf_token }}">
                 <input type="hidden" name="domain" value="{{ domain.name }}">
                 <button class="btn sm danger" type="submit">Remove</button>
               </form>
@@ -131,6 +150,7 @@
     <div class="card-head"><h2>Add domain</h2></div>
     <div class="card-body">
       <form method="post" action="/sites/{{ site.site.id }}/domains">
+        <input type="hidden" name="csrf_token" value="{{ chrome.csrf_token }}">
         <div class="field">
           <label for="new-domain">Domain or subdomain</label>
           <input id="new-domain" name="domain" type="text" required placeholder="shop.example.com"
@@ -155,11 +175,14 @@
       </dl>
       <div class="btn-row mt">
         <form class="inline-form" method="post" action="/sites/{{ site.site.id }}/actions/update-wordpress">
+          <input type="hidden" name="csrf_token" value="{{ chrome.csrf_token }}">
           <button class="btn primary" type="submit">Update core</button>
         </form>
         <form class="inline-form" method="post" action="/sites/{{ site.site.id }}/actions/clear-cache">
+          <input type="hidden" name="csrf_token" value="{{ chrome.csrf_token }}">
           <button class="btn" type="submit">Flush caches</button>
         </form>
+        <a class="btn ghost" href="/sites/{{ site.site.id }}/console">WP-CLI console</a>
       </div>
     </div>
   </section>
@@ -167,13 +190,32 @@
   <section class="card">
     <div class="card-head"><h2>WP-CLI</h2></div>
     <div class="card-body">
-      <p class="muted">The agent runs WP-CLI inside the site container as the site user. Plugin, theme
-        and cron management arrive with the WordPress milestone.</p>
-      <pre class="log">$ wp core version
-{{ site.site.wp_label() }}
+      <p class="muted">Run whitelisted commands against this site's WordPress installation.</p>
+      <a class="btn" href="/sites/{{ site.site.id }}/console">Open console</a>
+    </div>
+  </section>
+</div>
 
-$ wp plugin list --status=active
-(pending: WordPress management milestone)</pre>
+<section class="card mt">
+  <div class="card-head"><h2>Plugins</h2></div>
+  <div class="card-body" hx-get="/partials/sites/{{ site.site.id }}/plugins" hx-trigger="load" hx-swap="innerHTML">
+    <p class="muted">Loading plugins...</p>
+  </div>
+</section>
+
+<section class="card mt">
+  <div class="card-head"><h2>Themes</h2></div>
+  <div class="card-body" hx-get="/partials/sites/{{ site.site.id }}/themes" hx-trigger="load" hx-swap="innerHTML">
+    <p class="muted">Loading themes...</p>
+  </div>
+</section>
+
+<section class="card mt">
+  <div class="card-head"><h2>Users</h2></div>
+  <div class="card-body" hx-get="/partials/sites/{{ site.site.id }}/wpusers" hx-trigger="load" hx-swap="innerHTML">
+    <p class="muted">Loading users...</p>
+  </div>
+</section>
     </div>
   </section>
 </div>
@@ -186,6 +228,7 @@ $ wp plugin list --status=active
       <p class="muted">Switching starts a container on the new version, health-checks it, moves the
         Nginx upstream and only then removes the old one.</p>
       <form method="post" action="/sites/{{ site.site.id }}/php">
+        <input type="hidden" name="csrf_token" value="{{ chrome.csrf_token }}">
         <div class="field">
           <label for="php">Target version</label>
           <select id="php" name="php_version">
@@ -206,6 +249,7 @@ $ wp plugin list --status=active
     <div class="card-head"><h2>Resource limits</h2></div>
     <div class="card-body">
       <form method="post" action="/sites/{{ site.site.id }}/limits">
+        <input type="hidden" name="csrf_token" value="{{ chrome.csrf_token }}">
         <div class="field-row">
           <div class="field">
             <label for="cpu">CPU</label>
@@ -253,9 +297,11 @@ $ wp plugin list --status=active
       </dl>
       <div class="btn-row mt">
         <form class="inline-form" method="post" action="/sites/{{ site.site.id }}/actions/issue-ssl">
+          <input type="hidden" name="csrf_token" value="{{ chrome.csrf_token }}">
           <button class="btn primary" type="submit">Issue certificate</button>
         </form>
         <form class="inline-form" method="post" action="/sites/{{ site.site.id }}/actions/renew-ssl">
+          <input type="hidden" name="csrf_token" value="{{ chrome.csrf_token }}">
           <button class="btn" type="submit">Renew now</button>
         </form>
       </div>
@@ -279,7 +325,12 @@ $ wp plugin list --status=active
   <div class="card-head">
     <h2>Backups</h2>
     <div class="spacer"></div>
+    <form class="inline-form" method="post" action="/sites/{{ site.site.id }}/backups/sync" style="margin-right: 0.5rem;">
+      <input type="hidden" name="csrf_token" value="{{ chrome.csrf_token }}">
+      <button class="btn sm" type="submit">Sync from node</button>
+    </form>
     <form class="inline-form" method="post" action="/sites/{{ site.site.id }}/actions/backup">
+      <input type="hidden" name="csrf_token" value="{{ chrome.csrf_token }}">
       <button class="btn sm primary" type="submit">Back up now</button>
     </form>
   </div>
@@ -300,7 +351,18 @@ $ wp plugin list --status=active
           <td data-label="Size" class="nowrap">{{ backup.size_label() }}</td>
           <td data-label="Destination">{{ backup.destination }}</td>
           <td data-label="Created" class="nowrap" title="{{ backup.timestamp_label() }}">{{ backup.created_label() }}</td>
-          <td class="actions"><button class="btn sm" disabled title="Restore lands with the backup milestone">Restore</button></td>
+          <td class="actions">
+            <form class="inline-form" method="post" action="/sites/{{ site.site.id }}/backups/{{ backup.snapshot_id }}/restore"
+                  onsubmit="return confirm('Restore this backup for {{ site.site.domain }}?')">
+              <input type="hidden" name="csrf_token" value="{{ chrome.csrf_token }}">
+              <select name="scope" class="sm" style="margin-right: 0.25rem;">
+                <option value="full">Full</option>
+                <option value="files_only">Files only</option>
+                <option value="database_only">Database only</option>
+              </select>
+              <button class="btn sm" type="submit">Restore</button>
+            </form>
+          </td>
         </tr>
       {% endfor %}
       </tbody>
@@ -309,17 +371,87 @@ $ wp plugin list --status=active
   {% endif %}
 </section>
 
+{% else if tab == "staging" %}
+<div class="grid two">
+  <section class="card">
+    <div class="card-head"><h2>Staging</h2></div>
+    <div class="card-body">
+      {% if site.site.is_staging() %}
+      <p>This is a <strong>staging</strong> site.</p>
+      <div class="field mt">
+        <form method="post" action="/sites/{{ site.site.id }}/staging/push">
+          <input type="hidden" name="csrf_token" value="{{ chrome.csrf_token }}">
+          <button class="btn primary" type="submit">Push to production</button>
+        </form>
+      </div>
+      <p class="text-xs text-gray-500 mt-2">This will create a safety backup of production, then copy files and database from this staging site.</p>
+      {% else %}
+      <p>This is a <strong>production</strong> site.</p>
+      <div class="field mt">
+        <form method="post" action="/sites/{{ site.site.id }}/staging/create">
+          <input type="hidden" name="csrf_token" value="{{ chrome.csrf_token }}">
+          <button class="btn" type="submit">Create staging clone</button>
+        </form>
+      </div>
+      <p class="text-xs text-gray-500 mt-2">Creates a staging copy at staging.{{ site.site.domain }} with blog_public=0.</p>
+      {% endif %}
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>Clone</h2></div>
+    <div class="card-body">
+      <p>Create an independent clone of this site to another domain.</p>
+      <div class="field mt">
+        <a class="btn" href="/sites/{{ site.site.id }}/clone">Clone site</a>
+      </div>
+    </div>
+  </section>
+</div>
+
 {% else if tab == "logs" %}
 <section class="card">
   <div class="card-head"><h2>Logs</h2></div>
   <div class="card-body">
-    <p class="muted">Log streaming is served by the agent over the same authenticated channel.
-      Paths on the node:</p>
-    <pre class="log">{{ site.site.root_path() }}/logs/nginx-access.log
-{{ site.site.root_path() }}/logs/nginx-error.log
-{{ site.site.root_path() }}/logs/php-error.log
-{{ site.site.root_path() }}/logs/php-slow.log
-{{ site.site.root_path() }}/logs/wp-debug.log</pre>
+    <div class="flex gap-3 mb-3 items-center" style="flex-wrap:wrap">
+      <select id="log-stream" class="sm">
+        <option value="nginx-error">Nginx error</option>
+        <option value="nginx-access">Nginx access</option>
+        <option value="php-error">PHP error</option>
+        <option value="php-slow">PHP slow</option>
+        <option value="wp-debug">WP debug</option>
+        <option value="agent">Agent</option>
+      </select>
+      <input id="log-grep" type="text" class="sm" placeholder="Filter (exact match)" maxlength="64" style="width:200px">
+      <label class="check" style="margin:0">
+        <input type="checkbox" id="log-follow">
+        <span>Follow</span>
+      </label>
+    </div>
+    <div id="log-output"
+         hx-get="/partials/sites/{{ site.site.id }}/logs?stream=nginx-error&lines=200"
+         hx-trigger="load"
+         hx-swap="innerHTML">
+      <pre class="log">Loading...</pre>
+    </div>
+    <script>
+      document.getElementById('log-stream').addEventListener('change', updateLogs);
+      document.getElementById('log-grep').addEventListener('input', debounce(updateLogs, 300));
+      document.getElementById('log-follow').addEventListener('change', updateLogs);
+      function debounce(fn, ms) { let t; return function() { clearTimeout(t); t = setTimeout(fn, ms); }; }
+      function updateLogs() {
+        const s = document.getElementById('log-stream').value;
+        const g = document.getElementById('log-grep').value;
+        const f = document.getElementById('log-follow').checked;
+        let url = '/partials/sites/{{ site.site.id }}/logs?stream=' + encodeURIComponent(s) + '&lines=200';
+        if (g) url += '&grep=' + encodeURIComponent(g);
+        const el = document.getElementById('log-output');
+        el.setAttribute('hx-get', url);
+        el.setAttribute('hx-trigger', f ? 'load, every 3s' : 'load');
+        htmx.trigger(el, 'htmx:configRequest', {elt: el});
+        htmx.ajax('GET', url, {target: '#log-output', swap: 'innerHTML'});
+      }
+    </script>
   </div>
 </section>
 
@@ -329,6 +461,7 @@ $ wp plugin list --status=active
     <div class="card-head"><h2>Caching</h2></div>
     <div class="card-body">
       <form method="post" action="/sites/{{ site.site.id }}/cache">
+        <input type="hidden" name="csrf_token" value="{{ chrome.csrf_token }}">
         <div class="gap" style="gap:.5rem">
           <label class="check">
             <input type="checkbox" name="fastcgi_cache" {% if site.site.cache.fastcgi_cache %}checked{% endif %}>
@@ -363,6 +496,7 @@ $ wp plugin list --status=active
         Backups are kept.</p>
       <form method="post" action="/sites/{{ site.site.id }}/actions/delete"
             data-confirm="Delete {{ site.site.domain }}? Files, database and container are removed.">
+        <input type="hidden" name="csrf_token" value="{{ chrome.csrf_token }}">
         <button class="btn danger" type="submit">Delete site</button>
       </form>
     </div>

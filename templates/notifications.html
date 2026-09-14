@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Notifications</h1>
+    <p>System alerts and warnings</p>
+  </div>
+</div>
+
+{% if open.is_empty() %}
+<section class="card">
+  <div class="empty">
+    <h3>No open alerts</h3>
+    <p>All systems are operating within normal parameters.</p>
+  </div>
+</section>
+{% else %}
+<section class="card">
+  <div class="card-head"><h2>Open ({{ open.len() }})</h2></div>
+  <div class="table-wrap">
+    <table class="data stack">
+      <thead><tr><th>Severity</th><th>Rule</th><th>Target</th><th>Message</th><th>Since</th><th></th></tr></thead>
+      <tbody>
+      {% for n in open %}
+        <tr>
+          <td data-label="Severity">
+            <span class="pill {% if n.severity == "critical" %}bad{% else if n.severity == "warning" %}warn{% else %}ok{% endif %}">{{ n.severity }}</span>
+          </td>
+          <td data-label="Rule" class="mono">{{ n.rule }}</td>
+          <td data-label="Target"><a href="/sites">{{ n.target }}</a></td>
+          <td data-label="Message">{{ n.message }}</td>
+          <td data-label="Since" class="nowrap">{{ n.created_at }}</td>
+          <td class="actions">
+            <form class="inline-form" method="post" action="/notifications/{{ n.id }}/resolve">
+              <input type="hidden" name="csrf_token" value="{{ chrome.csrf_token }}">
+              <button class="btn sm" type="submit">Resolve</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+{% if !recent.is_empty() %}
+<section class="card">
+  <div class="card-head"><h2>Recent history</h2></div>
+  <div class="table-wrap">
+    <table class="data stack">
+      <thead><tr><th>Severity</th><th>Rule</th><th>Target</th><th>Message</th><th>Created</th><th>Resolved</th></tr></thead>
+      <tbody>
+      {% for n in recent %}
+        <tr>
+          <td data-label="Severity">
+            <span class="pill {% if n.severity == "critical" %}bad{% else if n.severity == "warning" %}warn{% else %}ok{% endif %}">{{ n.severity }}</span>
+          </td>
+          <td data-label="Rule" class="mono">{{ n.rule }}</td>
+          <td data-label="Target">{{ n.target }}</td>
+          <td data-label="Message">{{ n.message }}</td>
+          <td data-label="Created" class="nowrap">{{ n.created_at }}</td>
+          <td data-label="Resolved" class="nowrap">{{ n.resolved_at.as_deref().unwrap_or("—") }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+{% endblock %}

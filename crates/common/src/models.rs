@@ -107,6 +107,8 @@ pub struct Site {
     pub cache: CacheSettings,
     pub ssl: SslState,
     pub environment: Environment,
+    /// Parent site ID (set when this is a staging clone).
+    pub parent_site_id: Option<i64>,
     /// Dedicated Linux UID/GID owning `/var/www/<domain>`.
     pub uid: u32,
     pub disk_usage_mb: u64,
@@ -434,6 +436,19 @@ pub enum JobKind {
     StagingCreate,
     #[serde(rename = "staging.push")]
     StagingPush,
+    // M2: WordPress management
+    #[serde(rename = "plugin.action")]
+    PluginAction,
+    #[serde(rename = "plugin.update_all")]
+    PluginUpdateAll,
+    #[serde(rename = "theme.action")]
+    ThemeAction,
+    #[serde(rename = "wordpress.reset_password")]
+    WpUserPasswordReset,
+    #[serde(rename = "cron.run")]
+    CronRun,
+    #[serde(rename = "cron.mode")]
+    CronModeSet,
 }
 
 impl JobKind {
@@ -455,11 +470,17 @@ impl JobKind {
             Self::CacheClear => "cache.clear",
             Self::StagingCreate => "staging.create",
             Self::StagingPush => "staging.push",
+            Self::PluginAction => "plugin.action",
+            Self::PluginUpdateAll => "plugin.update_all",
+            Self::ThemeAction => "theme.action",
+            Self::WpUserPasswordReset => "wordpress.reset_password",
+            Self::CronRun => "cron.run",
+            Self::CronModeSet => "cron.mode",
         }
     }
 
     pub fn parse(s: &str) -> Option<Self> {
-        const ALL: [JobKind; 16] = [
+        const ALL: [JobKind; 22] = [
             JobKind::SiteCreate,
             JobKind::SiteDelete,
             JobKind::SiteClone,
@@ -476,6 +497,12 @@ impl JobKind {
             JobKind::CacheClear,
             JobKind::StagingCreate,
             JobKind::StagingPush,
+            JobKind::PluginAction,
+            JobKind::PluginUpdateAll,
+            JobKind::ThemeAction,
+            JobKind::WpUserPasswordReset,
+            JobKind::CronRun,
+            JobKind::CronModeSet,
         ];
         ALL.into_iter().find(|k| k.as_str() == s)
     }
@@ -499,6 +526,12 @@ impl JobKind {
             Self::CacheClear => "Clear cache",
             Self::StagingCreate => "Create staging",
             Self::StagingPush => "Push staging to production",
+            Self::PluginAction => "Plugin action",
+            Self::PluginUpdateAll => "Update all plugins",
+            Self::ThemeAction => "Theme action",
+            Self::WpUserPasswordReset => "Reset WP password",
+            Self::CronRun => "Run cron event",
+            Self::CronModeSet => "Set cron mode",
         }
     }
 }
@@ -812,4 +845,108 @@ impl Domain {
             "warn"
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// WordPress management (M2)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WpItemAction {
+    Activate,
+    Deactivate,
+    Update,
+    Delete,
+    Install,
+}
+
+impl WpItemAction {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Activate => "activate",
+            Self::Deactivate => "deactivate",
+            Self::Update => "update",
+            Self::Delete => "delete",
+            Self::Install => "install",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CronMode {
+    WpCron,
+    SystemCron,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginInfo {
+    pub name: String,
+    pub slug: String,
+    pub status: String,
+    pub version: String,
+    pub update_version: Option<String>,
+    pub auto_update: bool,
+}
+
+impl PluginInfo {
+    pub fn is_active(&self) -> bool {
+        self.status == "active"
+    }
+
+    pub fn has_update(&self) -> bool {
+        self.update_version.is_some()
+    }
+
+    pub fn status_tone(&self) -> &'static str {
+        if self.is_active() {
+            "ok"
+        } else {
+            "muted"
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThemeInfo {
+    pub name: String,
+    pub slug: String,
+    pub status: String,
+    pub version: String,
+    pub update_version: Option<String>,
+}
+
+impl ThemeInfo {
+    pub fn is_active(&self) -> bool {
+        self.status == "active"
+    }
+
+    pub fn has_update(&self) -> bool {
+        self.update_version.is_some()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WpUserInfo {
+    pub id: i64,
+    pub login: String,
+    pub email: String,
+    pub role: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CronEventInfo {
+    pub hook: String,
+    pub next_run_relative: String,
+    pub schedule: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SiteMetricSample {
+    pub site_id: i64,
+    pub cpu_percent: f32,
+    pub memory_mb: u64,
+    pub php_busy_workers: u32,
+    pub cache_hit_ratio: Option<f32>,
 }
