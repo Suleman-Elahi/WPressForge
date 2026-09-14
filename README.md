@@ -1,4 +1,4 @@
-z# WP Panel
+# WP Panel
 
 Open-source control plane for hosting WordPress on your own Linux servers.
 Rust + Axum + Askama + HTMX for the panel, a Rust daemon on each node, and
@@ -108,19 +108,18 @@ keyboard focus styles, and `prefers-reduced-motion` respected.
 
 ## Status
 
-Working today: authentication and sessions, servers, sites, per-site tabs,
-domains, cache settings, resource limits, jobs with live progress and step
-timelines, audit log, JSON API, and the agent operations behind them.
+All planned milestones (M0 through M7), testing foundation (X1), operational runbooks (`docs/OPERATIONS.md`), and wire protocol catalog (`docs/PROTOCOL.md`) are implemented, passing tests, and verified.
 
-Next milestones, in order: security foundations (CSRF, agent certificate
-pinning, API tokens), WordPress management (plugins/themes/cron/WP-CLI), backups
-with destinations and restore, staging and cloning, logs and monitoring, then
-importing existing sites.
+- **Security (M1):** Per-session CSRF protection, TLS fingerprint pinning, API tokens, sliding-window login rate limiting, and RFC 6238 TOTP 2FA.
+- **WordPress Management (M2):** Live inspection and actions for plugins, themes, users, WP cron, and WP-CLI command runner.
+- **Backups & Restoration (M3):** Encrypted offsite S3/MinIO destination credentials (AES-256-GCM), Restic snapshots, per-site backup schedule UI, and one-click restores.
+- **Cloning & Staging (M4):** Automated site replication, staging environment isolation with safety backups, and production push pipeline.
+- **Observability (M5):** Pure inline SVG sparklines for host and container telemetry, 30s auto-polling, log streaming, and threshold alerts.
+- **Site Migration (M6):** Multi-step import wizard with SSH compatibility probes, rsync file migration, and automated DB search & replace.
+- **Multi-Tenancy & Teams (M7):** Role-based access control (`owner`, `admin`, `operator`, `viewer`), granular per-site user assignments, invitation tokens, and async RFC 5321 SMTP outbound email.
+- **Documentation & CI (X1):** Full operational disaster recovery guides, wire protocol documentation, and GitHub Actions CI suite.
 
-The build plan for those milestones — file-by-file changes, migration SQL,
-protocol additions, pseudocode and per-milestone verification commands — is in
-[`docs/IMPLEMENTATION-PLAN.md`](./docs/IMPLEMENTATION-PLAN.md). Start with §2
-(conventions) before writing code.
+Detailed architecture and milestone specifications are documented in [`docs/IMPLEMENTATION-PLAN.md`](./docs/IMPLEMENTATION-PLAN.md).
 
 ## License
 

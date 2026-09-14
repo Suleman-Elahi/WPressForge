@@ -1,4 +1,4 @@
-use super::{parse_ts, parse_ts_opt, Db};
+use super::{Db, parse_ts, parse_ts_opt};
 use sqlx::{AssertSqlSafe, Row};
 use wp_common::models::{Job, JobKind, JobStatus, StepView};
 
@@ -120,19 +120,23 @@ pub async fn payload(db: &Db, id: i64) -> sqlx::Result<Option<serde_json::Value>
 }
 
 pub async fn list(db: &Db, limit: i64) -> sqlx::Result<Vec<JobRow>> {
-    let rows = sqlx::query(AssertSqlSafe(format!("{SELECT} ORDER BY j.id DESC LIMIT ?1")))
-        .bind(limit)
-        .fetch_all(db)
-        .await?;
+    let rows = sqlx::query(AssertSqlSafe(format!(
+        "{SELECT} ORDER BY j.id DESC LIMIT ?1"
+    )))
+    .bind(limit)
+    .fetch_all(db)
+    .await?;
     Ok(rows.iter().map(map).collect())
 }
 
 pub async fn list_for_site(db: &Db, site_id: i64, limit: i64) -> sqlx::Result<Vec<JobRow>> {
-    let rows = sqlx::query(AssertSqlSafe(format!("{SELECT} WHERE j.site_id = ?1 ORDER BY j.id DESC LIMIT ?2")))
-        .bind(site_id)
-        .bind(limit)
-        .fetch_all(db)
-        .await?;
+    let rows = sqlx::query(AssertSqlSafe(format!(
+        "{SELECT} WHERE j.site_id = ?1 ORDER BY j.id DESC LIMIT ?2"
+    )))
+    .bind(site_id)
+    .bind(limit)
+    .fetch_all(db)
+    .await?;
     Ok(rows.iter().map(map).collect())
 }
 
@@ -174,14 +178,24 @@ pub async fn progress(db: &Db, id: i64, progress: u8, message: &str) -> sqlx::Re
     Ok(())
 }
 
-pub async fn finish(db: &Db, id: i64, status: JobStatus, message: &str, error: Option<&str>) -> sqlx::Result<()> {
+pub async fn finish(
+    db: &Db,
+    id: i64,
+    status: JobStatus,
+    message: &str,
+    error: Option<&str>,
+) -> sqlx::Result<()> {
     sqlx::query(
         "UPDATE jobs SET status = ?2, progress = ?3, message = ?4, error = ?5, finished_at = ?6
          WHERE id = ?1",
     )
     .bind(id)
     .bind(status.as_str())
-    .bind(if status == JobStatus::Succeeded { 100i64 } else { 0i64 })
+    .bind(if status == JobStatus::Succeeded {
+        100i64
+    } else {
+        0i64
+    })
     .bind(message)
     .bind(error)
     .bind(super::now_string())

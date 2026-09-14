@@ -11,12 +11,12 @@ use crate::db::{self, jobs::JobRow, servers::ServerRow};
 use crate::state::AppState;
 use chrono::{Duration as ChronoDuration, Utc};
 use std::time::{Duration, Instant};
+use wp_common::Error as AgentError;
 use wp_common::models::{
     BackupScope, CronMode, JobKind, JobStatus, PhpVersion, ServerStatus, SiteStatus, SslIssuer,
     WpItemAction,
 };
 use wp_common::protocol::{CreateSite, Operation, OperationData};
-use wp_common::Error as AgentError;
 
 /// Ordered step plan per job kind. Also drives the progress bar.
 pub fn plan(kind: JobKind) -> &'static [&'static str] {
@@ -61,13 +61,41 @@ pub fn plan(kind: JobKind) -> &'static [&'static str] {
         ],
         JobKind::WordpressInstall => &["Download core", "Configure wp-config", "Run installer"],
         JobKind::WordpressUpdate => &["Backup", "Update core", "Update database", "Health check"],
-        JobKind::BackupCreate => &["Dump database", "Snapshot files", "Upload to destination", "Prune retention"],
-        JobKind::BackupRestore => &["Fetch snapshot", "Restore database", "Restore files", "Fix permissions", "Health check"],
-        JobKind::SslIssue => &["Verify DNS", "Request certificate", "Install certificate", "Reload Nginx"],
+        JobKind::BackupCreate => &[
+            "Dump database",
+            "Snapshot files",
+            "Upload to destination",
+            "Prune retention",
+        ],
+        JobKind::BackupRestore => &[
+            "Fetch snapshot",
+            "Restore database",
+            "Restore files",
+            "Fix permissions",
+            "Health check",
+        ],
+        JobKind::SslIssue => &[
+            "Verify DNS",
+            "Request certificate",
+            "Install certificate",
+            "Reload Nginx",
+        ],
         JobKind::SslRenew => &["Renew certificate", "Reload Nginx"],
         JobKind::CacheClear => &["Purge FastCGI cache", "Flush object cache"],
-        JobKind::StagingCreate => &["Create staging site", "Copy files", "Copy database", "Search & replace URLs", "Health check"],
-        JobKind::StagingPush => &["Backup production", "Copy files", "Copy database", "Search & replace URLs", "Health check"],
+        JobKind::StagingCreate => &[
+            "Create staging site",
+            "Copy files",
+            "Copy database",
+            "Search & replace URLs",
+            "Health check",
+        ],
+        JobKind::StagingPush => &[
+            "Backup production",
+            "Copy files",
+            "Copy database",
+            "Search & replace URLs",
+            "Health check",
+        ],
         // M2: WordPress management
         JobKind::PluginAction => &["Run WP-CLI", "Verify site responds"],
         JobKind::PluginUpdateAll => &["Backup", "Update plugins", "Verify site responds"],
@@ -75,6 +103,21 @@ pub fn plan(kind: JobKind) -> &'static [&'static str] {
         JobKind::WpUserPasswordReset => &["Generate password", "Apply"],
         JobKind::CronRun => &["Run due events"],
         JobKind::CronModeSet => &["Update wp-config", "Write system cron"],
+        JobKind::ImportRun => &[
+            "Validate source",
+            "Allocate system user",
+            "Create filesystem layout",
+            "Copy files",
+            "Export database",
+            "Create database",
+            "Import database",
+            "Start container",
+            "Configure WordPress",
+            "Search & replace",
+            "Verify checksums",
+            "Write Nginx vhost",
+            "Health check",
+        ],
     }
 }
 
@@ -87,7 +130,12 @@ pub fn spawn(state: AppState, count: usize) {
                 match db::jobs::claim_next(&state.db).await {
                     Ok(Some(job)) => {
                         let id = job.job.id;
-                        tracing::info!(worker, job = id, kind = job.job.kind.as_str(), "job started");
+                        tracing::info!(
+                            worker,
+                            job = id,
+                            kind = job.job.kind.as_str(),
+                            "job started"
+                        );
                         if let Err(error) = run(&state, job).await {
                             tracing::warn!(job = id, %error, "job failed");
                             let _ = db::jobs::finish(
@@ -189,12 +237,16 @@ async fn heartbeat_loop(state: AppState) {
                     .unwrap_or_default();
 
                 if !site_ids.is_empty() {
-                    match state.agent.query(
-                        &conn,
-                        wp_common::protocol::Operation::GetSiteMetrics {
-                            site_ids: site_ids.clone(),
-                        },
-                    ).await {
+                    match state
+                        .agent
+                        .query(
+                            &conn,
+                            wp_common::protocol::Operation::GetSiteMetrics {
+                                site_ids: site_ids.clone(),
+                            },
+                        )
+                        .await
+                    {
                         Ok(wp_common::protocol::OperationData::SiteMetrics(samples)) => {
                             for sample in &samples {
                                 let _ = db::metrics::insert_site(&state.db, sample).await;
@@ -229,7 +281,9 @@ fn is_demo(row: &ServerRow) -> bool {
 async fn run(state: &AppState, job: JobRow) -> anyhow::Result<()> {
     let job_id = job.job.id;
     let kind = job.job.kind;
-    let payload = db::jobs::payload(&state.db, job_id).await?.unwrap_or_default();
+    let payload = db::jobs::payload(&state.db, job_id)
+        .await?
+        .unwrap_or_default();
 
     let server = match job.job.server_id {
         Some(id) => db::servers::get(&state.db, id).await?,
@@ -239,21 +293,19 @@ async fn run(state: &AppState, job: JobRow) -> anyhow::Result<()> {
     let operation = build_operation(state, &job, &payload).await;
 
     let outcome = match (&server, &operation) {
-        (Some(server), Some(operation)) if !is_demo(server) => {
-            state
-                .agent
-                .send(
-                    &crate::agent::ServerConnection {
-                        url: server.server.agent_url.clone(),
-                        token: server.agent_token.clone(),
-                        fingerprint: server.agent_fingerprint.clone(),
-                    },
-                    operation.clone(),
-                    Some(job_id),
-                )
-                .await
-                .map(Some)
-        }
+        (Some(server), Some(operation)) if !is_demo(server) => state
+            .agent
+            .send(
+                &crate::agent::ServerConnection {
+                    url: server.server.agent_url.clone(),
+                    token: server.agent_token.clone(),
+                    fingerprint: server.agent_fingerprint.clone(),
+                },
+                operation.clone(),
+                Some(job_id),
+            )
+            .await
+            .map(Some),
         _ => Ok(None),
     };
 
@@ -354,7 +406,11 @@ async fn simulate(state: &AppState, job: &JobRow) -> anyhow::Result<()> {
 
 /// Maps a job row + payload to the agent operation that performs it.
 /// Now async because backup operations need to resolve destinations from the database.
-async fn build_operation(state: &AppState, job: &JobRow, payload: &serde_json::Value) -> Option<Operation> {
+async fn build_operation(
+    state: &AppState,
+    job: &JobRow,
+    payload: &serde_json::Value,
+) -> Option<Operation> {
     let site_id = job.job.site_id?;
 
     Some(match job.job.kind {
@@ -423,7 +479,8 @@ async fn build_operation(state: &AppState, job: &JobRow, payload: &serde_json::V
             let target = match destination_id {
                 Some(id) => {
                     let dest = db::destinations::get(&state.db, id).await.ok().flatten()?;
-                    let creds = db::destinations::decrypt_credentials(&dest, &state.secrets).ok()?;
+                    let creds =
+                        db::destinations::decrypt_credentials(&dest, &state.secrets).ok()?;
                     let endpoint = dest.endpoint.as_deref().unwrap_or("s3.amazonaws.com");
                     wp_common::protocol::ResticTarget {
                         repo: format!("s3:{}/{}", endpoint, dest.bucket),
@@ -442,10 +499,8 @@ async fn build_operation(state: &AppState, job: &JobRow, payload: &serde_json::V
             };
             Operation::CreateBackup {
                 site_id,
-                scope: serde_json::from_value(
-                    payload.get("scope").cloned().unwrap_or_default(),
-                )
-                .unwrap_or(BackupScope::Full),
+                scope: serde_json::from_value(payload.get("scope").cloned().unwrap_or_default())
+                    .unwrap_or(BackupScope::Full),
                 target,
                 retention: wp_common::models::RetentionPolicy::default(),
             }
@@ -455,7 +510,8 @@ async fn build_operation(state: &AppState, job: &JobRow, payload: &serde_json::V
             let target = match destination_id {
                 Some(id) => {
                     let dest = db::destinations::get(&state.db, id).await.ok().flatten()?;
-                    let creds = db::destinations::decrypt_credentials(&dest, &state.secrets).ok()?;
+                    let creds =
+                        db::destinations::decrypt_credentials(&dest, &state.secrets).ok()?;
                     let endpoint = dest.endpoint.as_deref().unwrap_or("s3.amazonaws.com");
                     wp_common::protocol::ResticTarget {
                         repo: format!("s3:{}/{}", endpoint, dest.bucket),
@@ -479,10 +535,8 @@ async fn build_operation(state: &AppState, job: &JobRow, payload: &serde_json::V
                     .and_then(|v| v.as_str())
                     .unwrap_or_default()
                     .to_string(),
-                scope: serde_json::from_value(
-                    payload.get("scope").cloned().unwrap_or_default(),
-                )
-                .unwrap_or(BackupScope::Full),
+                scope: serde_json::from_value(payload.get("scope").cloned().unwrap_or_default())
+                    .unwrap_or(BackupScope::Full),
                 target,
             }
         }
@@ -494,10 +548,8 @@ async fn build_operation(state: &AppState, job: &JobRow, payload: &serde_json::V
                 .and_then(|v| v.as_str())
                 .unwrap_or_default()
                 .to_string(),
-            action: serde_json::from_value(
-                payload.get("action").cloned().unwrap_or_default(),
-            )
-            .unwrap_or(WpItemAction::Activate),
+            action: serde_json::from_value(payload.get("action").cloned().unwrap_or_default())
+                .unwrap_or(WpItemAction::Activate),
         },
         JobKind::PluginUpdateAll => Operation::UpdateAllPlugins { site_id },
         JobKind::ThemeAction => Operation::ThemeAction {
@@ -507,10 +559,8 @@ async fn build_operation(state: &AppState, job: &JobRow, payload: &serde_json::V
                 .and_then(|v| v.as_str())
                 .unwrap_or_default()
                 .to_string(),
-            action: serde_json::from_value(
-                payload.get("action").cloned().unwrap_or_default(),
-            )
-            .unwrap_or(WpItemAction::Activate),
+            action: serde_json::from_value(payload.get("action").cloned().unwrap_or_default())
+                .unwrap_or(WpItemAction::Activate),
         },
         JobKind::WpUserPasswordReset => Operation::ResetWpPassword {
             site_id,
@@ -530,22 +580,50 @@ async fn build_operation(state: &AppState, job: &JobRow, payload: &serde_json::V
         },
         JobKind::CronModeSet => Operation::SetWpCron {
             site_id,
-            mode: serde_json::from_value(
-                payload.get("mode").cloned().unwrap_or_default(),
-            )
-            .unwrap_or(CronMode::WpCron),
+            mode: serde_json::from_value(payload.get("mode").cloned().unwrap_or_default())
+                .unwrap_or(CronMode::WpCron),
         },
+        JobKind::ImportRun => {
+            let source =
+                serde_json::from_value(payload.get("source").cloned().unwrap_or_default()).ok()?;
+            let resync = payload
+                .get("resync")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            Operation::ImportSite {
+                site_id,
+                source,
+                resync,
+            }
+        }
         JobKind::SiteClone | JobKind::StagingCreate | JobKind::StagingPush => {
-            let source_site_id = payload.get("source_site_id").and_then(|v| v.as_i64()).unwrap_or(site_id);
-            let source_site = db::sites::get(&state.db, source_site_id).await.ok().flatten();
-            let target_site_id = payload.get("target_site_id").and_then(|v| v.as_i64()).unwrap_or(site_id);
-            let target_domain = payload.get("target_domain")
+            let source_site_id = payload
+                .get("source_site_id")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(site_id);
+            let source_site = db::sites::get(&state.db, source_site_id)
+                .await
+                .ok()
+                .flatten();
+            let target_site_id = payload
+                .get("target_site_id")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(site_id);
+            let target_domain = payload
+                .get("target_domain")
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
-            let staging = job.job.kind == JobKind::StagingCreate || job.job.kind == JobKind::StagingPush;
-            let request_ssl = payload.get("request_ssl").and_then(|v| v.as_bool()).unwrap_or(false);
-            let php_version = source_site.as_ref().map(|s| s.site.php_version).unwrap_or(PhpVersion::Php84);
+            let staging =
+                job.job.kind == JobKind::StagingCreate || job.job.kind == JobKind::StagingPush;
+            let request_ssl = payload
+                .get("request_ssl")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let php_version = source_site
+                .as_ref()
+                .map(|s| s.site.php_version)
+                .unwrap_or(PhpVersion::Php84);
             let source_domain = source_site.map(|s| s.site.domain).unwrap_or_default();
 
             Operation::CloneSite(wp_common::protocol::CloneSite {
@@ -559,8 +637,18 @@ async fn build_operation(state: &AppState, job: &JobRow, payload: &serde_json::V
                 request_ssl,
             })
         }
-        // Clone / staging / WordPress operations land with their milestones.
-        _ => return None,
+        JobKind::WordpressInstall => {
+            Operation::InstallWordpress(serde_json::from_value(payload.clone()).unwrap_or_else(
+                |_| wp_common::protocol::InstallWordpress {
+                    site_id,
+                    site_title: "WordPress".into(),
+                    admin_user: "admin".into(),
+                    admin_email: "admin@example.com".into(),
+                    admin_password: "password".into(),
+                    locale: "en_US".into(),
+                },
+            ))
+        }
     })
 }
 
@@ -573,10 +661,16 @@ async fn apply_effects(
     let Some(site_id) = job.job.site_id else {
         return Ok(());
     };
-    let payload = db::jobs::payload(&state.db, job.job.id).await?.unwrap_or_default();
+    let payload = db::jobs::payload(&state.db, job.job.id)
+        .await?
+        .unwrap_or_default();
 
     match job.job.kind {
-        JobKind::SiteCreate | JobKind::SiteStart | JobKind::SiteRestart | JobKind::SiteClone => {
+        JobKind::SiteCreate
+        | JobKind::SiteStart
+        | JobKind::SiteRestart
+        | JobKind::SiteClone
+        | JobKind::ImportRun => {
             db::sites::set_status(&state.db, site_id, SiteStatus::Online).await?;
             if job.job.kind == JobKind::SiteCreate {
                 db::sites::set_wp_version(&state.db, site_id, "6.7.1").await?;
@@ -595,6 +689,9 @@ async fn apply_effects(
                     .await?;
                 }
             }
+        }
+        JobKind::WordpressInstall => {
+            db::sites::set_wp_version(&state.db, site_id, "6.7.1").await?;
         }
         JobKind::SiteStop => {
             db::sites::set_status(&state.db, site_id, SiteStatus::Stopped).await?;
@@ -616,17 +713,28 @@ async fn apply_effects(
                 Some(OperationData::Certificate { expires_at, .. }) => *expires_at,
                 _ => Utc::now() + ChronoDuration::days(90),
             };
-            db::sites::set_ssl(&state.db, site_id, true, SslIssuer::LetsEncrypt, Some(expires))
-                .await?;
+            db::sites::set_ssl(
+                &state.db,
+                site_id,
+                true,
+                SslIssuer::LetsEncrypt,
+                Some(expires),
+            )
+            .await?;
         }
         JobKind::BackupCreate => {
             let (snapshot, size) = match data {
-                Some(OperationData::Backup { snapshot_id, size_bytes }) => {
-                    (snapshot_id.clone(), *size_bytes)
-                }
-                _ => (crate::auth::random_token()[..8].to_lowercase(), 1_150_000_000),
+                Some(OperationData::Backup {
+                    snapshot_id,
+                    size_bytes,
+                }) => (snapshot_id.clone(), *size_bytes),
+                _ => (
+                    crate::auth::random_token()[..8].to_lowercase(),
+                    1_150_000_000,
+                ),
             };
-            db::sites::record_backup(&state.db, site_id, &snapshot, BackupScope::Full, size).await?;
+            db::sites::record_backup(&state.db, site_id, &snapshot, BackupScope::Full, size)
+                .await?;
         }
         _ => {}
     }

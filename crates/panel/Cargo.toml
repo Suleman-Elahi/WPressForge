@@ -5,6 +5,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[lib]
+name = "wp_panel"
+path = "src/lib.rs"
+
 [[bin]]
 name = "wp-panel"
 path = "src/main.rs"
@@ -40,6 +44,8 @@ clap = { workspace = true }
 humantime = { workspace = true }
 serde_urlencoded = { workspace = true }
 aes-gcm = { workspace = true }
+urlencoding = { workspace = true }
+sha1 = "0.10"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 rustls-pemfile = "2"
 webpki-roots = "0.26"

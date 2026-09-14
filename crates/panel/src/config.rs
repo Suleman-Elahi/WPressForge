@@ -39,4 +39,24 @@ pub struct Config {
     /// Mark cookies as Secure. Turn off only for local plain-HTTP development.
     #[arg(long, env = "WP_PANEL_SECURE_COOKIES", default_value_t = false)]
     pub secure_cookies: bool,
+
+    /// Outbound SMTP server host.
+    #[arg(long, env = "WP_PANEL_SMTP_HOST")]
+    pub smtp_host: Option<String>,
+
+    /// Outbound SMTP server port (typically 587 or 25).
+    #[arg(long, env = "WP_PANEL_SMTP_PORT", default_value_t = 587)]
+    pub smtp_port: u16,
+
+    /// SMTP username.
+    #[arg(long, env = "WP_PANEL_SMTP_USER")]
+    pub smtp_user: Option<String>,
+
+    /// SMTP password.
+    #[arg(long, env = "WP_PANEL_SMTP_PASSWORD")]
+    pub smtp_password: Option<String>,
+
+    /// SMTP from address (e.g. noreply@example.com).
+    #[arg(long, env = "WP_PANEL_SMTP_FROM")]
+    pub smtp_from: Option<String>,
 }

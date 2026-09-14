@@ -3,34 +3,16 @@
 //! Serves the UI and JSON API, owns the SQLite state, and runs the job workers
 //! that drive node agents.
 
-mod agent;
-mod alerts;
-mod api;
-mod auth;
-mod config;
-mod csrf;
-mod db;
-mod error;
-mod jobs;
-mod scheduler;
-mod secrets;
-mod state;
-mod web;
+#![allow(clippy::collapsible_if, clippy::clone_on_copy, dead_code)]
 
-use crate::agent::AgentClient;
-use crate::config::Config;
-use crate::state::AppState;
-use axum::http::{header, HeaderValue, StatusCode};
-use axum::routing::{get, post};
-use axum::{middleware, Router};
 use clap::Parser;
 use rand::RngCore;
 use std::time::Duration;
-use tower_http::compression::CompressionLayer;
-use tower_http::services::ServeDir;
-use tower_http::set_header::SetResponseHeaderLayer;
-use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
+use wp_panel::agent::AgentClient;
+use wp_panel::config::Config;
+use wp_panel::state::AppState;
+use wp_panel::{alerts_loop, csrf, db, jobs, router, scheduler, secrets};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -99,61 +81,6 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn router(state: AppState, config: &Config) -> Router {
-    // Static assets are content-addressed by the `?v=` query the templates
-    // append, so they can be cached hard.
-    let static_service = ServeDir::new(&config.static_dir)
-        .precompressed_br()
-        .precompressed_gzip()
-        .append_index_html_on_directories(false);
-
-    let protected = web::routes()
-        .layer(middleware::from_fn_with_state(
-            state.clone(),
-            auth::require_session,
-        ));
-
-    let api = api::routes().layer(middleware::from_fn_with_state(
-        state.clone(),
-        auth::require_api_auth,
-    ));
-
-    Router::new()
-        .merge(protected)
-        .nest("/api/v1", api)
-        .route("/login", get(web::pages::login_form).post(web::pages::login_submit))
-        .route("/logout", post(web::pages::logout))
-        .route("/healthz", get(healthz))
-        .nest_service("/static", static_service)
-        .fallback(not_found)
-        .layer(CompressionLayer::new().br(true).gzip(true))
-        .layer(SetResponseHeaderLayer::if_not_present(
-            header::X_CONTENT_TYPE_OPTIONS,
-            HeaderValue::from_static("nosniff"),
-        ))
-        .layer(SetResponseHeaderLayer::if_not_present(
-            header::REFERRER_POLICY,
-            HeaderValue::from_static("same-origin"),
-        ))
-        .layer(SetResponseHeaderLayer::if_not_present(
-            header::HeaderName::from_static("x-frame-options"),
-            HeaderValue::from_static("DENY"),
-        ))
-        .layer(TraceLayer::new_for_http())
-        .with_state(state)
-}
-
-async fn healthz() -> &'static str {
-    "ok"
-}
-
-async fn not_found() -> (StatusCode, axum::response::Html<String>) {
-    (
-        StatusCode::NOT_FOUND,
-        web::render_error(StatusCode::NOT_FOUND, "That page does not exist."),
-    )
-}
-
 async fn shutdown_signal() {
     let ctrl_c = async {
         tokio::signal::ctrl_c().await.ok();
@@ -179,12 +106,4 @@ async fn shutdown_signal() {
     tracing::info!("shutting down");
     // Give in-flight requests a moment to finish.
     tokio::time::sleep(Duration::from_millis(200)).await;
-}
-
-async fn alerts_loop(state: AppState) {
-    let mut ticker = tokio::time::interval(Duration::from_secs(60));
-    loop {
-        ticker.tick().await;
-        alerts::evaluate(&state).await;
-    }
 }

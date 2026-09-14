@@ -1,4 +1,4 @@
-use super::{render, Chrome, FlashQuery};
+use super::{Chrome, FlashQuery, render};
 use crate::auth::{CurrentSession, CurrentUser};
 use crate::db;
 use crate::error::{AppError, AppResult};
@@ -44,7 +44,9 @@ pub async fn detail(
     Path(id): Path<i64>,
     Query(query): Query<FlashQuery>,
 ) -> AppResult<Response> {
-    let job = db::jobs::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+    let job = db::jobs::get(&state.db, id)
+        .await?
+        .ok_or(AppError::NotFound)?;
     let steps = db::jobs::steps(&state.db, id).await?;
 
     Ok(render(DetailTemplate {
@@ -96,7 +98,9 @@ pub async fn progress_fragment(
     _user: CurrentUser,
     Path(id): Path<i64>,
 ) -> AppResult<Response> {
-    let job = db::jobs::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+    let job = db::jobs::get(&state.db, id)
+        .await?
+        .ok_or(AppError::NotFound)?;
     let steps = db::jobs::steps(&state.db, id).await?;
     Ok(super::no_store(render(ProgressFragment {
         plan: crate::jobs::plan(job.job.kind),

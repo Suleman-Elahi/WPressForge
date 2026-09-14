@@ -22,15 +22,18 @@ pub async fn list_open(db: &SqlitePool, limit: i64) -> sqlx::Result<Vec<Notifica
     .fetch_all(db)
     .await?;
 
-    Ok(rows.iter().map(|row| Notification {
-        id: row.get("id"),
-        severity: row.get("severity"),
-        rule: row.get("rule"),
-        target: row.get("target"),
-        message: row.get("message"),
-        resolved_at: row.get("resolved_at"),
-        created_at: row.get("created_at"),
-    }).collect())
+    Ok(rows
+        .iter()
+        .map(|row| Notification {
+            id: row.get("id"),
+            severity: row.get("severity"),
+            rule: row.get("rule"),
+            target: row.get("target"),
+            message: row.get("message"),
+            resolved_at: row.get("resolved_at"),
+            created_at: row.get("created_at"),
+        })
+        .collect())
 }
 
 pub async fn list_recent(db: &SqlitePool, limit: i64) -> sqlx::Result<Vec<Notification>> {
@@ -44,15 +47,18 @@ pub async fn list_recent(db: &SqlitePool, limit: i64) -> sqlx::Result<Vec<Notifi
     .fetch_all(db)
     .await?;
 
-    Ok(rows.iter().map(|row| Notification {
-        id: row.get("id"),
-        severity: row.get("severity"),
-        rule: row.get("rule"),
-        target: row.get("target"),
-        message: row.get("message"),
-        resolved_at: row.get("resolved_at"),
-        created_at: row.get("created_at"),
-    }).collect())
+    Ok(rows
+        .iter()
+        .map(|row| Notification {
+            id: row.get("id"),
+            severity: row.get("severity"),
+            rule: row.get("rule"),
+            target: row.get("target"),
+            message: row.get("message"),
+            resolved_at: row.get("resolved_at"),
+            created_at: row.get("created_at"),
+        })
+        .collect())
 }
 
 pub async fn count_open(db: &SqlitePool) -> sqlx::Result<i64> {

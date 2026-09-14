@@ -7,9 +7,9 @@ use crate::config::Config;
 use crate::exec;
 use crate::ops::database;
 use crate::store::SiteRecord;
+use wp_common::Result;
 use wp_common::models::BackupScope;
 use wp_common::protocol::ResticTarget;
-use wp_common::{Error, Result};
 
 #[derive(serde::Deserialize)]
 pub struct Snapshot {
@@ -55,7 +55,12 @@ pub async fn init(config: &Config, target: &ResticTarget) -> Result<()> {
 }
 
 /// Create a backup.
-pub async fn create(config: &Config, site: &SiteRecord, scope: BackupScope, target: &ResticTarget) -> Result<Snapshot> {
+pub async fn create(
+    config: &Config,
+    site: &SiteRecord,
+    scope: BackupScope,
+    target: &ResticTarget,
+) -> Result<Snapshot> {
     let root = config.site_root(&site.domain);
 
     if scope != BackupScope::FilesOnly {
@@ -117,7 +122,11 @@ pub async fn create(config: &Config, site: &SiteRecord, scope: BackupScope, targ
 }
 
 /// List snapshots for a site.
-pub async fn list(config: &Config, site: &SiteRecord, target: &ResticTarget) -> Result<Vec<Snapshot>> {
+pub async fn list(
+    config: &Config,
+    site: &SiteRecord,
+    target: &ResticTarget,
+) -> Result<Vec<Snapshot>> {
     let extra = &[
         "snapshots",
         "--json",
@@ -150,12 +159,7 @@ pub async fn restore(
     let restore_dir = format!("/tmp/restore-{}", site.site_id);
 
     // 1. Restore to a temporary directory.
-    let extra = &[
-        "restore",
-        snapshot_id,
-        "--target",
-        &restore_dir,
-    ];
+    let extra = &["restore", snapshot_id, "--target", &restore_dir];
     let args = restic_args(target, extra);
     let env = restic_env(target);
     exec::run_with_env(config.dry_run, "restic", &args, &env).await?;
@@ -164,12 +168,7 @@ pub async fn restore(
     if scope != BackupScope::DatabaseOnly {
         let src = format!("{}/", restore_dir);
         let dst = root.join("public_html").display().to_string();
-        exec::run(
-            config.dry_run,
-            "rsync",
-            &["-a", "--delete", &src, &dst],
-        )
-        .await?;
+        exec::run(config.dry_run, "rsync", &["-a", "--delete", &src, &dst]).await?;
     }
 
     // 3. Import database (unless files-only).
@@ -196,7 +195,12 @@ pub async fn restore(
 }
 
 /// Apply retention policy after a successful backup.
-pub async fn prune(config: &Config, site: &SiteRecord, policy: wp_common::models::RetentionPolicy, target: &ResticTarget) -> Result<()> {
+pub async fn prune(
+    config: &Config,
+    site: &SiteRecord,
+    policy: wp_common::models::RetentionPolicy,
+    target: &ResticTarget,
+) -> Result<()> {
     let extra = &[
         "forget",
         "--prune",
@@ -213,5 +217,7 @@ pub async fn prune(config: &Config, site: &SiteRecord, policy: wp_common::models
     ];
     let args = restic_args(target, extra);
     let env = restic_env(target);
-    exec::run_with_env(config.dry_run, "restic", &args, &env).await.map(|_| ())
+    exec::run_with_env(config.dry_run, "restic", &args, &env)
+        .await
+        .map(|_| ())
 }

@@ -4,12 +4,12 @@ use crate::auth::{CurrentSession, CurrentUser};
 use crate::db;
 use crate::error::AppError;
 use crate::state::AppState;
-use axum::extract::{Form, Path, State};
-use axum::response::{IntoResponse, Redirect, Response};
 use askama::Template;
+use axum::extract::{Form, Path, State};
+use axum::response::Response;
 use serde::Deserialize;
 
-use super::{redirect_with_flash, render, Chrome, FlashQuery};
+use super::{Chrome, FlashQuery, redirect_with_flash, render};
 
 #[derive(Template)]
 #[template(path = "settings/destinations.html")]
@@ -43,8 +43,19 @@ pub async fn list(
     axum::extract::Query(query): axum::extract::Query<FlashQuery>,
 ) -> Result<Response, AppError> {
     let destinations = db::destinations::list(&state.db).await?;
-    let chrome = Chrome::new(&state, &user, &session, "settings", "Backup Destinations", query.flash).await;
-    Ok(render(DestinationsPage { chrome, destinations }))
+    let chrome = Chrome::new(
+        &state,
+        &user,
+        &session,
+        "settings",
+        "Backup Destinations",
+        query.flash,
+    )
+    .await;
+    Ok(render(DestinationsPage {
+        chrome,
+        destinations,
+    }))
 }
 
 pub async fn new_form(
@@ -73,7 +84,10 @@ pub async fn create(
         restic_password: form.restic_password,
     };
     db::destinations::create(&state.db, db_form, &state.secrets).await?;
-    Ok(redirect_with_flash("/settings/destinations", "Destination created"))
+    Ok(redirect_with_flash(
+        "/settings/destinations",
+        "Destination created",
+    ))
 }
 
 pub async fn delete(
@@ -83,7 +97,10 @@ pub async fn delete(
     Path(id): Path<i64>,
 ) -> Result<Response, AppError> {
     db::destinations::delete(&state.db, id).await?;
-    Ok(redirect_with_flash("/settings/destinations", "Destination deleted"))
+    Ok(redirect_with_flash(
+        "/settings/destinations",
+        "Destination deleted",
+    ))
 }
 
 pub async fn test(
@@ -113,10 +130,26 @@ pub async fn test(
 
     // Use the first online server for the test.
     let servers = db::servers::list(&state.db).await?;
-    let server = servers.iter().find(|s| s.server.status == wp_common::models::ServerStatus::Online).ok_or(AppError::NotFound)?;
+    let server = servers
+        .iter()
+        .find(|s| s.server.status == wp_common::models::ServerStatus::Online)
+        .ok_or(AppError::NotFound)?;
 
-    match state.agent.query(&server.connection(), wp_common::protocol::Operation::InitBackupRepo { target }).await {
-        Ok(_) => Ok(redirect_with_flash("/settings/destinations", "Repository connection successful")),
-        Err(e) => Ok(redirect_with_flash("/settings/destinations", &format!("Test failed: {e}"))),
+    match state
+        .agent
+        .query(
+            &server.connection(),
+            wp_common::protocol::Operation::InitBackupRepo { target },
+        )
+        .await
+    {
+        Ok(_) => Ok(redirect_with_flash(
+            "/settings/destinations",
+            "Repository connection successful",
+        )),
+        Err(e) => Ok(redirect_with_flash(
+            "/settings/destinations",
+            &format!("Test failed: {e}"),
+        )),
     }
 }

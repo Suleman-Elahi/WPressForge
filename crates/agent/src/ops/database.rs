@@ -6,8 +6,8 @@ use crate::exec;
 use crate::ops::filesystem::system_user;
 use crate::store::SiteRecord;
 use rand::Rng;
-use wp_common::models::DatabaseMode;
 use wp_common::Result;
+use wp_common::models::DatabaseMode;
 
 pub struct Credentials {
     pub name: String,

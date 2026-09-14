@@ -7,7 +7,7 @@ use chrono::Utc;
 use serde_json::json;
 use wp_common::models::JobKind;
 
-pub async fn spawn_scheduler(state: AppState) {
+pub fn spawn_scheduler(state: AppState) {
     tokio::spawn(async move {
         scheduler_loop(state).await;
     });

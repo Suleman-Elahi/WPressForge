@@ -1612,15 +1612,15 @@ Update this table in the same commit that finishes a milestone.
 | --- | --- | --- | --- |
 | M0 | Scaffold: auth, servers, sites, jobs, agent ops, UI | **done** | — |
 | M0.1 | Nginx capability probe, version-correct vhosts, `WebServer` seam, 13 unit tests + `nginx -t` host test | **done** | — |
-| M1 | CSRF, TLS pinning, API tokens, login throttle, 2FA | todo | production exposure |
-| M2 | Plugins, themes, users, cron, WP-CLI console | todo | — |
-| M3 | Destinations, schedules, retention, restore | todo | M1 (secret storage) |
-| M4 | Clone, staging, push | todo | M3 (safety backup) |
-| M5 | Log viewer, metrics history, alerts | todo | — |
-| M6 | Import existing sites | todo | M1 (secret handling) |
-| M7 | Teams, roles, invitations | todo | M1 |
+| M1 | CSRF, TLS pinning, API tokens, login throttle, 2FA | **done** | — |
+| M2 | Plugins, themes, users, cron, WP-CLI console | **done** | — |
+| M3 | Destinations, schedules, retention, restore | **done** | — |
+| M4 | Clone, staging, push | **done** | — |
+| M5 | Log viewer, metrics history, alerts | **done** | — |
+| M6 | Import existing sites | **done** | — |
+| M7 | Teams, roles, invitations | **done** | — |
 | M8 | OpenLiteSpeed backend (conditional, see §9.5) | not planned | explicit user demand |
-| X1 | Tests + CI | todo | start during M1 |
+| X1 | Tests + CI | **done** | — |
 
 ---
 
@@ -1640,8 +1640,10 @@ note on what was rejected.
 | clap | both | flags + env in one place | hand-rolled parsing |
 | tracing(-subscriber) | both | structured logs | log + env_logger |
 | **hmac, sha2** | panel | CSRF token, API token hashing (M1) | new crate for CSRF |
+| **sha1** | panel | RFC 6238 TOTP HMAC-SHA1 calculation (M1) | heavy all-in-one 2FA crate |
 | **rcgen** | agent | self-signed agent certificate (M1) | shelling out to openssl |
-| **rustls / axum-server** | agent | TLS listener (M1) | terminate TLS in Nginx (extra hop) |
+| **rustls / axum-server** | agent, panel | TLS listener (M1) & fingerprint pinning | terminate TLS in Nginx (extra hop) |
+| **rustls-pemfile, webpki-roots** | panel | Certificate parser & roots for TLS pinning | danger_accept_invalid_certs (rejected) |
 | **aes-gcm** | panel | sealing destination secrets (M3) | storing plaintext (rejected) |
 
 Rejected outright, do not add: any SPA framework, Kubernetes client, cron

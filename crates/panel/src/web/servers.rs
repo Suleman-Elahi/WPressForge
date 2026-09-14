@@ -1,12 +1,12 @@
-use super::{redirect_with_flash, render, Chrome, FlashQuery};
+use super::{Chrome, FlashQuery, redirect_with_flash, render};
 use crate::auth::{CurrentSession, CurrentUser};
 use crate::db;
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 use askama::Template;
+use axum::Form;
 use axum::extract::{Path, Query, State};
 use axum::response::Response;
-use axum::Form;
 use serde::Deserialize;
 use wp_common::models::ServerStatus;
 
@@ -49,12 +49,16 @@ pub async fn detail(
     Path(id): Path<i64>,
     Query(query): Query<FlashQuery>,
 ) -> AppResult<Response> {
-    let server = db::servers::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+    let server = db::servers::get(&state.db, id)
+        .await?
+        .ok_or(AppError::NotFound)?;
     let sites = db::sites::list_for_server(&state.db, id).await?;
     let jobs = db::jobs::list(&state.db, 6).await?;
 
     // Fetch 24h metrics history for sparklines.
-    let history = db::metrics::server_history(&state.db, id, 24).await.unwrap_or_default();
+    let history = db::metrics::server_history(&state.db, id, 24)
+        .await
+        .unwrap_or_default();
     let cpu_vals: Vec<f32> = history.iter().map(|r| r.cpu as f32).collect();
     let mem_vals: Vec<f32> = history.iter().map(|r| r.memory as f32).collect();
     let disk_vals: Vec<f32> = history.iter().map(|r| r.disk as f32).collect();
@@ -93,7 +97,15 @@ pub async fn new_form(
     Query(query): Query<FlashQuery>,
 ) -> AppResult<Response> {
     Ok(render(NewTemplate {
-        chrome: Chrome::new(&state, &user, &session, "servers", "Attach server", query.flash).await,
+        chrome: Chrome::new(
+            &state,
+            &user,
+            &session,
+            "servers",
+            "Attach server",
+            query.flash,
+        )
+        .await,
         suggested_token: crate::auth::random_token(),
     }))
 }
@@ -195,7 +207,9 @@ pub async fn delete(
     user: CurrentUser,
     Path(id): Path<i64>,
 ) -> AppResult<Response> {
-    let server = db::servers::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+    let server = db::servers::get(&state.db, id)
+        .await?
+        .ok_or(AppError::NotFound)?;
     if server.site_count > 0 {
         return Err(AppError::BadRequest(
             "detach or delete the sites on this server first".into(),
@@ -231,7 +245,9 @@ pub async fn metrics_fragment(
     _user: CurrentUser,
     Path(id): Path<i64>,
 ) -> AppResult<Response> {
-    let server = db::servers::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+    let server = db::servers::get(&state.db, id)
+        .await?
+        .ok_or(AppError::NotFound)?;
     Ok(super::no_store(render(MetricsFragment { server })))
 }
 
@@ -273,7 +289,11 @@ impl Spark {
             .iter()
             .enumerate()
             .map(|(i, &v)| {
-                let x = if n == 1 { width / 2.0 } else { i as f32 * width / (n - 1) as f32 };
+                let x = if n == 1 {
+                    width / 2.0
+                } else {
+                    i as f32 * width / (n - 1) as f32
+                };
                 let y = height - ((v - min) / range * height);
                 format!("{x:.1},{y:.1}")
             })

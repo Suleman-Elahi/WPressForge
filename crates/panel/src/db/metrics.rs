@@ -40,10 +40,7 @@ pub async fn insert_server(
     Ok(row.get::<i64, _>("id"))
 }
 
-pub async fn insert_site(
-    db: &SqlitePool,
-    sample: &SiteMetricSample,
-) -> sqlx::Result<i64> {
+pub async fn insert_site(db: &SqlitePool, sample: &SiteMetricSample) -> sqlx::Result<i64> {
     let row = sqlx::query(
         "INSERT INTO site_metrics_history (site_id, cpu, memory_mb, php_busy, cache_hit_ratio, created_at)
          VALUES (?1, ?2, ?3, ?4, ?5, datetime('now'))
@@ -137,10 +134,11 @@ pub async fn site_history(
 
 /// Delete history older than `days` days.
 pub async fn cleanup(db: &SqlitePool, days: u32) -> sqlx::Result<u64> {
-    let r1 = sqlx::query("DELETE FROM server_metrics_history WHERE created_at < datetime('now', ?1)")
-        .bind(format!("-{days} days"))
-        .execute(db)
-        .await?;
+    let r1 =
+        sqlx::query("DELETE FROM server_metrics_history WHERE created_at < datetime('now', ?1)")
+            .bind(format!("-{days} days"))
+            .execute(db)
+            .await?;
     let r2 = sqlx::query("DELETE FROM site_metrics_history WHERE created_at < datetime('now', ?1)")
         .bind(format!("-{days} days"))
         .execute(db)

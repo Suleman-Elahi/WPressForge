@@ -449,6 +449,8 @@ pub enum JobKind {
     CronRun,
     #[serde(rename = "cron.mode")]
     CronModeSet,
+    #[serde(rename = "import.run")]
+    ImportRun,
 }
 
 impl JobKind {
@@ -476,11 +478,12 @@ impl JobKind {
             Self::WpUserPasswordReset => "wordpress.reset_password",
             Self::CronRun => "cron.run",
             Self::CronModeSet => "cron.mode",
+            Self::ImportRun => "import.run",
         }
     }
 
     pub fn parse(s: &str) -> Option<Self> {
-        const ALL: [JobKind; 22] = [
+        const ALL: [JobKind; 23] = [
             JobKind::SiteCreate,
             JobKind::SiteDelete,
             JobKind::SiteClone,
@@ -503,6 +506,7 @@ impl JobKind {
             JobKind::WpUserPasswordReset,
             JobKind::CronRun,
             JobKind::CronModeSet,
+            JobKind::ImportRun,
         ];
         ALL.into_iter().find(|k| k.as_str() == s)
     }
@@ -532,6 +536,7 @@ impl JobKind {
             Self::WpUserPasswordReset => "Reset WP password",
             Self::CronRun => "Run cron event",
             Self::CronModeSet => "Set cron mode",
+            Self::ImportRun => "Import site",
         }
     }
 }
@@ -697,7 +702,9 @@ impl Site {
     }
 
     pub fn wp_label(&self) -> String {
-        self.wp_version.clone().unwrap_or_else(|| "not installed".into())
+        self.wp_version
+            .clone()
+            .unwrap_or_else(|| "not installed".into())
     }
 
     pub fn memory_label(&self) -> String {
@@ -839,11 +846,7 @@ impl Domain {
     }
 
     pub fn dns_tone(&self) -> &'static str {
-        if self.dns_ok {
-            "ok"
-        } else {
-            "warn"
-        }
+        if self.dns_ok { "ok" } else { "warn" }
     }
 }
 
@@ -900,11 +903,7 @@ impl PluginInfo {
     }
 
     pub fn status_tone(&self) -> &'static str {
-        if self.is_active() {
-            "ok"
-        } else {
-            "muted"
-        }
+        if self.is_active() { "ok" } else { "muted" }
     }
 }
 

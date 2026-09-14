@@ -20,7 +20,13 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(db: Db, config: Config, agent: AgentClient, csrf: CsrfKey, secrets: SecretBox) -> Self {
+    pub fn new(
+        db: Db,
+        config: Config,
+        agent: AgentClient,
+        csrf: CsrfKey,
+        secrets: SecretBox,
+    ) -> Self {
         Self {
             db,
             config: Arc::new(config),

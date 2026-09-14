@@ -1,4 +1,4 @@
-use super::{parse_ts, parse_ts_opt, Db};
+use super::{Db, parse_ts, parse_ts_opt};
 use sqlx::{AssertSqlSafe, Row};
 use wp_common::models::{
     Backup, BackupScope, CacheSettings, DatabaseMode, Domain, Environment, PhpVersion,
@@ -88,10 +88,12 @@ pub async fn list(db: &Db) -> sqlx::Result<Vec<SiteRow>> {
 }
 
 pub async fn list_for_server(db: &Db, server_id: i64) -> sqlx::Result<Vec<SiteRow>> {
-    let rows = sqlx::query(AssertSqlSafe(format!("{SELECT} WHERE s.server_id = ?1 ORDER BY s.domain")))
-        .bind(server_id)
-        .fetch_all(db)
-        .await?;
+    let rows = sqlx::query(AssertSqlSafe(format!(
+        "{SELECT} WHERE s.server_id = ?1 ORDER BY s.domain"
+    )))
+    .bind(server_id)
+    .fetch_all(db)
+    .await?;
     Ok(rows.iter().map(map).collect())
 }
 
@@ -103,8 +105,42 @@ pub async fn get(db: &Db, id: i64) -> sqlx::Result<Option<SiteRow>> {
     Ok(row.as_ref().map(map))
 }
 
+pub async fn list_for_user(db: &Db, user_id: i64, user_role: &str) -> sqlx::Result<Vec<SiteRow>> {
+    if super::teams::has_global_access(user_role) {
+        return list(db).await;
+    }
+    let rows = sqlx::query(AssertSqlSafe(format!(
+        "{SELECT} JOIN site_users su ON su.site_id = s.id WHERE su.user_id = ?1 ORDER BY s.domain"
+    )))
+    .bind(user_id)
+    .fetch_all(db)
+    .await?;
+    Ok(rows.iter().map(map).collect())
+}
+
+pub async fn get_for_user(
+    db: &Db,
+    id: i64,
+    user_id: i64,
+    user_role: &str,
+) -> sqlx::Result<Option<SiteRow>> {
+    if super::teams::has_global_access(user_role) {
+        return get(db, id).await;
+    }
+    let row = sqlx::query(AssertSqlSafe(format!(
+        "{SELECT} JOIN site_users su ON su.site_id = s.id WHERE s.id = ?1 AND su.user_id = ?2"
+    )))
+    .bind(id)
+    .bind(user_id)
+    .fetch_optional(db)
+    .await?;
+    Ok(row.as_ref().map(map))
+}
+
 pub async fn count(db: &Db) -> sqlx::Result<i64> {
-    sqlx::query_scalar("SELECT COUNT(*) FROM sites").fetch_one(db).await
+    sqlx::query_scalar("SELECT COUNT(*) FROM sites")
+        .fetch_one(db)
+        .await
 }
 
 pub async fn count_by_status(db: &Db, status: SiteStatus) -> sqlx::Result<i64> {
@@ -241,13 +277,15 @@ pub async fn set_ssl(
     issuer: SslIssuer,
     expires_at: Option<chrono::DateTime<chrono::Utc>>,
 ) -> sqlx::Result<()> {
-    sqlx::query("UPDATE sites SET ssl_enabled = ?2, ssl_issuer = ?3, ssl_expires_at = ?4 WHERE id = ?1")
-        .bind(id)
-        .bind(enabled as i64)
-        .bind(issuer.as_str())
-        .bind(expires_at.map(|d| d.to_rfc3339()))
-        .execute(db)
-        .await?;
+    sqlx::query(
+        "UPDATE sites SET ssl_enabled = ?2, ssl_issuer = ?3, ssl_expires_at = ?4 WHERE id = ?1",
+    )
+    .bind(id)
+    .bind(enabled as i64)
+    .bind(issuer.as_str())
+    .bind(expires_at.map(|d| d.to_rfc3339()))
+    .execute(db)
+    .await?;
     Ok(())
 }
 
@@ -383,10 +421,12 @@ pub async fn list_all(db: &Db) -> sqlx::Result<Vec<SiteRow>> {
 
 /// Get the most recent backup timestamp for a site.
 pub async fn last_backup_time(db: &Db, site_id: i64) -> sqlx::Result<Option<String>> {
-    let row = sqlx::query("SELECT created_at FROM backups WHERE site_id = ?1 ORDER BY created_at DESC LIMIT 1")
-        .bind(site_id)
-        .fetch_optional(db)
-        .await?;
+    let row = sqlx::query(
+        "SELECT created_at FROM backups WHERE site_id = ?1 ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(site_id)
+    .fetch_optional(db)
+    .await?;
     Ok(row.map(|r| r.get("created_at")))
 }
 

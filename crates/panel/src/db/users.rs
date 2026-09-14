@@ -1,4 +1,4 @@
-use super::{parse_ts, parse_ts_opt, Db};
+use super::{Db, parse_ts, parse_ts_opt};
 use chrono::{DateTime, Duration, Utc};
 use sqlx::{AssertSqlSafe, Row};
 
@@ -41,7 +41,7 @@ impl User {
     }
 }
 
-fn map(row: &sqlx::sqlite::SqliteRow) -> User {
+pub(crate) fn map_row(row: &sqlx::sqlite::SqliteRow) -> User {
     User {
         id: row.get("id"),
         email: row.get("email"),
@@ -59,19 +59,22 @@ fn map(row: &sqlx::sqlite::SqliteRow) -> User {
     }
 }
 
-const COLUMNS: &str =
-    "id, email, name, password_hash, role, totp_secret, totp_confirmed_at, created_at, last_login_at";
+pub(crate) const COLUMNS: &str = "id, email, name, password_hash, role, totp_secret, totp_confirmed_at, created_at, last_login_at";
 
 pub async fn count(db: &Db) -> sqlx::Result<i64> {
-    sqlx::query_scalar("SELECT COUNT(*) FROM users").fetch_one(db).await
+    sqlx::query_scalar("SELECT COUNT(*) FROM users")
+        .fetch_one(db)
+        .await
 }
 
 pub async fn by_email(db: &Db, email: &str) -> sqlx::Result<Option<User>> {
-    let row = sqlx::query(AssertSqlSafe(format!("SELECT {COLUMNS} FROM users WHERE email = ?1")))
-        .bind(email)
-        .fetch_optional(db)
-        .await?;
-    Ok(row.as_ref().map(map))
+    let row = sqlx::query(AssertSqlSafe(format!(
+        "SELECT {COLUMNS} FROM users WHERE email = ?1"
+    )))
+    .bind(email)
+    .fetch_optional(db)
+    .await?;
+    Ok(row.as_ref().map(map_row))
 }
 
 pub async fn create(
@@ -143,7 +146,7 @@ pub async fn user_for_session(db: &Db, token: &str) -> sqlx::Result<Option<User>
     .bind(super::now_string())
     .fetch_optional(db)
     .await?;
-    Ok(row.as_ref().map(map))
+    Ok(row.as_ref().map(map_row))
 }
 
 pub async fn delete_session(db: &Db, token: &str) -> sqlx::Result<()> {
@@ -160,4 +163,34 @@ pub async fn purge_expired_sessions(db: &Db) -> sqlx::Result<u64> {
         .execute(db)
         .await?;
     Ok(result.rows_affected())
+}
+
+// ---------------------------------------------------------------------------
+// TOTP
+// ---------------------------------------------------------------------------
+
+pub async fn set_totp_secret(db: &Db, user_id: i64, secret: &str) -> sqlx::Result<()> {
+    sqlx::query("UPDATE users SET totp_secret = ?2 WHERE id = ?1")
+        .bind(user_id)
+        .bind(secret)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+pub async fn confirm_totp(db: &Db, user_id: i64) -> sqlx::Result<()> {
+    sqlx::query("UPDATE users SET totp_confirmed_at = ?2 WHERE id = ?1")
+        .bind(user_id)
+        .bind(super::now_string())
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+pub async fn disable_totp(db: &Db, user_id: i64) -> sqlx::Result<()> {
+    sqlx::query("UPDATE users SET totp_secret = NULL, totp_confirmed_at = NULL WHERE id = ?1")
+        .bind(user_id)
+        .execute(db)
+        .await?;
+    Ok(())
 }

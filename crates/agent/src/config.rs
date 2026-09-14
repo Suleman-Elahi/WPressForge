@@ -24,11 +24,19 @@ pub struct Config {
     pub cache_root: PathBuf,
 
     /// Where the agent keeps its local index of managed sites.
-    #[arg(long, env = "WP_AGENT_STATE", default_value = "/var/lib/wp-agent/state.json")]
+    #[arg(
+        long,
+        env = "WP_AGENT_STATE",
+        default_value = "/var/lib/wp-agent/state.json"
+    )]
     pub state_file: PathBuf,
 
     /// Nginx vhost directory.
-    #[arg(long, env = "WP_AGENT_NGINX_DIR", default_value = "/etc/nginx/sites-enabled")]
+    #[arg(
+        long,
+        env = "WP_AGENT_NGINX_DIR",
+        default_value = "/etc/nginx/sites-enabled"
+    )]
     pub nginx_dir: PathBuf,
 
     /// First UID handed out to sites. Each site gets the next free one.
@@ -75,5 +83,25 @@ impl Config {
     /// so it must be a valid identifier: dots become underscores.
     pub fn cache_dir(&self, domain: &str) -> PathBuf {
         self.cache_root.join(domain.replace('.', "_"))
+    }
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            bind: "127.0.0.1:8443".parse().unwrap(),
+            token: "test-token".into(),
+            sites_root: PathBuf::from("/var/www"),
+            cache_root: PathBuf::from("/var/cache/nginx"),
+            state_file: PathBuf::from("/var/lib/wp-agent/state.json"),
+            nginx_dir: PathBuf::from("/etc/nginx/sites-enabled"),
+            uid_base: 10001,
+            dry_run: true,
+            restic_repo: None,
+            acme_email: None,
+            tls_cert: None,
+            tls_key: None,
+            tls_self_signed: false,
+        }
     }
 }

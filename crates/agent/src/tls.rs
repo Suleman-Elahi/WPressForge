@@ -37,8 +37,8 @@ pub fn load_or_generate(
     if let (Some(cert), Some(key)) = (cert_path, key_path) {
         let cert_pem = fs::read(cert)
             .with_context(|| format!("reading TLS certificate from {}", cert.display()))?;
-        let key_pem = fs::read(key)
-            .with_context(|| format!("reading TLS key from {}", key.display()))?;
+        let key_pem =
+            fs::read(key).with_context(|| format!("reading TLS key from {}", key.display()))?;
         let fingerprint = fingerprint_from_pem(&cert_pem)?;
         tracing::info!(fingerprint = %fingerprint, "loaded TLS certificate from disk");
         return Ok(TlsBundle {
@@ -53,10 +53,10 @@ pub fn load_or_generate(
     let key_file = state_dir.join("agent.key");
 
     if cert_file.exists() && key_file.exists() && !cert_path.is_some() {
-        let cert_pem = fs::read(&cert_file)
-            .with_context(|| format!("reading {}", cert_file.display()))?;
-        let key_pem = fs::read(&key_file)
-            .with_context(|| format!("reading {}", key_file.display()))?;
+        let cert_pem =
+            fs::read(&cert_file).with_context(|| format!("reading {}", cert_file.display()))?;
+        let key_pem =
+            fs::read(&key_file).with_context(|| format!("reading {}", key_file.display()))?;
         let fingerprint = fingerprint_from_pem(&cert_pem)?;
         tracing::info!(fingerprint = %fingerprint, "reusing existing self-signed certificate");
         return Ok(TlsBundle {
@@ -72,13 +72,10 @@ pub fn load_or_generate(
     let fingerprint = fingerprint_from_pem(&cert_pem)?;
 
     // Ensure the state directory exists.
-    fs::create_dir_all(state_dir)
-        .with_context(|| format!("creating {}", state_dir.display()))?;
+    fs::create_dir_all(state_dir).with_context(|| format!("creating {}", state_dir.display()))?;
 
-    fs::write(&cert_file, &cert_pem)
-        .with_context(|| format!("writing {}", cert_file.display()))?;
-    fs::write(&key_file, &key_pem)
-        .with_context(|| format!("writing {}", key_file.display()))?;
+    fs::write(&cert_file, &cert_pem).with_context(|| format!("writing {}", cert_file.display()))?;
+    fs::write(&key_file, &key_pem).with_context(|| format!("writing {}", key_file.display()))?;
 
     // Restrict key permissions (owner read/write only).
     #[cfg(unix)]
@@ -103,11 +100,8 @@ pub fn load_or_generate(
 
 /// Generate a self-signed certificate for the given hostname and IP.
 fn generate_self_signed(hostname: &str, ip: &str) -> Result<(Vec<u8>, Vec<u8>)> {
-    let mut params = rcgen::CertificateParams::new(vec![
-        hostname.to_string(),
-        ip.to_string(),
-    ])
-    .context("creating certificate params")?;
+    let mut params = rcgen::CertificateParams::new(vec![hostname.to_string(), ip.to_string()])
+        .context("creating certificate params")?;
 
     params
         .distinguished_name
@@ -131,9 +125,7 @@ fn fingerprint_from_pem(pem_bytes: &[u8]) -> Result<String> {
         .collect::<Result<Vec<_>, _>>()
         .context("parsing PEM certificate")?;
 
-    let cert = certs
-        .first()
-        .context("no certificate found in PEM data")?;
+    let cert = certs.first().context("no certificate found in PEM data")?;
 
     let digest = Sha256::digest(cert.as_ref());
     let hex: Vec<String> = digest.iter().map(|b| format!("{b:02X}")).collect();

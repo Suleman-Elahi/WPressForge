@@ -1,0 +1,37 @@
+<div class="grid three mt">
+  <div class="card metrics-card">
+    <div class="metrics-head">
+      <h3>CPU</h3>
+      <div class="value">{{ cpu_spark.last }}%</div>
+    </div>
+    <div class="sparkline {{ cpu_spark.tone }}">
+      <svg viewBox="0 0 120 28" preserveAspectRatio="none">
+        <polyline points="{{ cpu_spark.points }}"></polyline>
+      </svg>
+    </div>
+  </div>
+
+  <div class="card metrics-card">
+    <div class="metrics-head">
+      <h3>Memory</h3>
+      <div class="value">{{ memory_spark.last }} MB</div>
+    </div>
+    <div class="sparkline {{ memory_spark.tone }}">
+      <svg viewBox="0 0 120 28" preserveAspectRatio="none">
+        <polyline points="{{ memory_spark.points }}"></polyline>
+      </svg>
+    </div>
+  </div>
+
+  <div class="card metrics-card">
+    <div class="metrics-head">
+      <h3>PHP Workers</h3>
+      <div class="value">{{ php_busy_spark.last }}</div>
+    </div>
+    <div class="sparkline {{ php_busy_spark.tone }}">
+      <svg viewBox="0 0 120 28" preserveAspectRatio="none">
+        <polyline points="{{ php_busy_spark.points }}"></polyline>
+      </svg>
+    </div>
+  </div>
+</div>

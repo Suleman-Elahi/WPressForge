@@ -6,15 +6,17 @@ use crate::exec;
 use crate::ops::webserver::WebServer;
 use crate::store::Store;
 use std::collections::BTreeMap;
-use wp_common::models::{PhpUsage, ServerMetrics, ServiceHealth};
 use wp_common::Result;
+use wp_common::models::{PhpUsage, ServerMetrics, ServiceHealth};
 
 pub async fn collect(config: &Config, store: &Store, web: &WebServer) -> Result<ServerMetrics> {
     let sites = store.all().await;
 
     let mut php_counts: BTreeMap<String, u32> = BTreeMap::new();
     for site in &sites {
-        *php_counts.entry(site.php_version.as_str().to_string()).or_insert(0) += 1;
+        *php_counts
+            .entry(site.php_version.as_str().to_string())
+            .or_insert(0) += 1;
     }
 
     let php_versions = sites
@@ -39,7 +41,9 @@ pub async fn collect(config: &Config, store: &Store, web: &WebServer) -> Result<
         disk_total_gb,
         load_1m: load_average().await,
         sites: sites.len() as u32,
-        containers: crate::ops::docker::container_count(config).await.unwrap_or(0),
+        containers: crate::ops::docker::container_count(config)
+            .await
+            .unwrap_or(0),
         services: services(web).await,
         php_versions,
     })
@@ -91,7 +95,11 @@ async fn disk(config: &Config) -> (f32, u64) {
     let Ok(output) = exec::run(
         false,
         "df",
-        &["-BG", "--output=size,pcent", &config.sites_root.display().to_string()],
+        &[
+            "-BG",
+            "--output=size,pcent",
+            &config.sites_root.display().to_string(),
+        ],
     )
     .await
     else {

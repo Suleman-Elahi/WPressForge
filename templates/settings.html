@@ -37,12 +37,58 @@
         <dt>Member since</dt><dd>{{ member_since }}</dd>
         <dt>Previous login</dt><dd>{{ last_login }}</dd>
         <dt>Sessions</dt><dd>cookie based, 14 day lifetime</dd>
-        <dt>2FA</dt><dd class="muted">planned</dd>
+        <dt>2FA</dt>
+        <dd>
+          {% if totp_confirmed_at.is_some() %}
+            <span class="pill good">Enabled</span>
+            <form method="post" action="/settings/totp/disable" class="inline-form mt" style="display:block">
+              <input type="hidden" name="csrf_token" value="{{ chrome.csrf_token }}">
+              <div class="field-row">
+                <input type="text" name="code" placeholder="6-digit code" required autocomplete="off" style="max-width:150px">
+                <button class="btn sm danger" type="submit">Disable 2FA</button>
+              </div>
+            </form>
+          {% else %}
+            <span class="muted">Disabled</span>
+            {% match totp_secret %}
+              {% when Some with (secret) %}
+                <div class="banner info mt">
+                  <p>Scan this URI in your authenticator app, or enter the secret manually:</p>
+                  {% match totp_uri %}
+                    {% when Some with (uri) %}
+                      <p class="mono" style="word-break:break-all;font-size:0.8rem;"><a href="{{ uri }}">{{ uri }}</a></p>
+                    {% when None %}
+                  {% endmatch %}
+                  <p class="mono">{{ secret }}</p>
+                  <form method="post" action="/settings/totp/confirm" class="inline-form mt">
+                    <input type="hidden" name="csrf_token" value="{{ chrome.csrf_token }}">
+                    <div class="field-row">
+                      <input type="text" name="code" placeholder="6-digit code" required autocomplete="off" style="max-width:150px">
+                      <button class="btn sm primary" type="submit">Confirm and enable</button>
+                    </div>
+                  </form>
+                </div>
+              {% when None %}
+                <form method="post" action="/settings/totp/enable" class="inline-form mt">
+                  <input type="hidden" name="csrf_token" value="{{ chrome.csrf_token }}">
+                  <button class="btn sm" type="submit">Set up 2FA</button>
+                </form>
+            {% endmatch %}
+          {% endif %}
+        </dd>
       </dl>
       <form method="post" action="/logout" class="mt">
         <input type="hidden" name="csrf_token" value="{{ chrome.csrf_token }}">
         <button class="btn" type="submit">Sign out</button>
       </form>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>Team</h2></div>
+    <div class="card-body">
+      <p class="muted">Manage users, roles and invitations.</p>
+      <a href="/settings/users" class="btn">Manage team</a>
     </div>
   </section>
 
@@ -91,6 +137,45 @@
       <p class="muted">Restic repositories on S3, R2, B2, Wasabi or MinIO. Configured per panel and
         selected per site, with hourly/daily/weekly/monthly retention.</p>
       <a href="/settings/destinations" class="btn">Manage destinations</a>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>Outbound Email (SMTP)</h2></div>
+    <div class="card-body">
+      <dl class="kv">
+        <dt>Status</dt>
+        <dd>
+          {% match smtp_host %}
+            {% when Some with (host) %}
+              <span class="pill good">Configured</span>
+            {% when None %}
+              <span class="pill warn">Console logging</span>
+          {% endmatch %}
+        </dd>
+        <dt>Host</dt>
+        <dd>
+          {% match smtp_host %}
+            {% when Some with (host) %}
+              {{ host }}:{{ smtp_port }}
+            {% when None %}
+              <span class="muted">None (simulated delivery)</span>
+          {% endmatch %}
+        </dd>
+        <dt>From</dt>
+        <dd>
+          {% match smtp_from %}
+            {% when Some with (from) %}
+              {{ from }}
+            {% when None %}
+              <span class="muted">noreply@localhost</span>
+          {% endmatch %}
+        </dd>
+      </dl>
+      <form method="post" action="/settings/smtp/test" class="mt">
+        <input type="hidden" name="csrf_token" value="{{ chrome.csrf_token }}">
+        <button class="btn sm" type="submit">Send test email</button>
+      </form>
     </div>
   </section>
 

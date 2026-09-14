@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1>Team</h1>
+    <p>Manage users, roles and invitations.</p>
+  </div>
+  {% if can_manage %}
+  <a href="#invite" class="btn primary">Invite user</a>
+  {% endif %}
+</div>
+
+<section class="card">
+  <div class="card-head"><h2>Users</h2></div>
+  <div class="card-body">
+    <div class="table-wrap">
+      <table class="data stack">
+        <thead>
+          <tr>
+            <th>Email</th>
+            <th>Name</th>
+            <th>Role</th>
+            <th>Site access</th>
+            <th>Last login</th>
+            {% if can_manage %}<th></th>{% endif %}
+          </tr>
+        </thead>
+        <tbody>
+        {% for u in users %}
+          <tr>
+            <td data-label="Email">{{ u.summary.email }}</td>
+            <td data-label="Name">{{ u.summary.name }}</td>
+            <td data-label="Role"><span class="pill info">{{ u.summary.role }}</span></td>
+            <td data-label="Site access">
+              {% if u.summary.role == "owner" || u.summary.role == "admin" %}
+                <span class="muted">All sites (global)</span>
+              {% else %}
+                <div style="display:flex;flex-direction:column;gap:0.25rem;">
+                  {% if u.sites.is_empty() %}
+                    <span class="muted">No site grants</span>
+                  {% else %}
+                    <div style="display:flex;flex-wrap:wrap;gap:0.25rem;">
+                      {% for s in u.sites %}
+                        <span class="pill" style="display:inline-flex;align-items:center;gap:0.25rem;">
+                          {{ s.domain }}
+                          {% if can_manage %}
+                          <form class="inline-form" method="post" action="/settings/users/{{ u.summary.id }}/sites/{{ s.site_id }}/revoke" style="display:inline;">
+                            <input type="hidden" name="csrf_token" value="{{ chrome.csrf_token }}">
+                            <button type="submit" style="background:none;border:none;cursor:pointer;padding:0;line-height:1;" title="Revoke access">&times;</button>
+                          </form>
+                          {% endif %}
+                        </span>
+                      {% endfor %}
+                    </div>
+                  {% endif %}
+                  {% if can_manage && !all_sites.is_empty() %}
+                    <form class="inline-form" method="post" action="/settings/users/{{ u.summary.id }}/sites" style="margin-top:0.25rem;">
+                      <input type="hidden" name="csrf_token" value="{{ chrome.csrf_token }}">
+                      <select name="site_id" required style="font-size:0.75rem;padding:0.2rem 0.4rem;">
+                        <option value="" disabled selected>+ Grant site...</option>
+                        {% for s in all_sites %}
+                          <option value="{{ s.site.id }}">{{ s.site.domain }}</option>
+                        {% endfor %}
+                      </select>
+                      <button class="btn sm" type="submit" style="font-size:0.75rem;padding:0.2rem 0.4rem;">Grant</button>
+                    </form>
+                  {% endif %}
+                </div>
+              {% endif %}
+            </td>
+            <td data-label="Last login">{% match u.summary.last_login_at %}{% when Some(when) %}{{ when }}{% when None %}never{% endmatch %}</td>
+            {% if can_manage %}
+            <td class="actions">
+              <form class="inline-form" method="post" action="/settings/users/{{ u.summary.id }}/role">
+                <input type="hidden" name="csrf_token" value="{{ chrome.csrf_token }}">
+                <select name="role" onchange="this.form.submit()">
+                  <option value="admin" {% if u.summary.role == "admin" %}selected{% endif %}>admin</option>
+                  <option value="operator" {% if u.summary.role == "operator" %}selected{% endif %}>operator</option>
+                  <option value="viewer" {% if u.summary.role == "viewer" %}selected{% endif %}>viewer</option>
+                </select>
+              </form>
+              <form class="inline-form" method="post" action="/settings/users/{{ u.summary.id }}/remove"
+                    data-confirm="Remove user {{ u.summary.email }}?">
+                <input type="hidden" name="csrf_token" value="{{ chrome.csrf_token }}">
+                <button class="btn sm danger" type="submit">Remove</button>
+              </form>
+            </td>
+            {% endif %}
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+{% if can_manage %}
+<section class="card" id="invite">
+  <div class="card-head"><h2>Invite a user</h2></div>
+  <div class="card-body">
+    <p class="muted">The invite creates a registration link. In a production deployment with SMTP configured, this would be emailed automatically.</p>
+    <form method="post" action="/settings/users/invite" class="form-grid mt">
+      <input type="hidden" name="csrf_token" value="{{ chrome.csrf_token }}">
+      <div class="field">
+        <label for="email">Email</label>
+        <input type="email" id="email" name="email" required placeholder="user@example.com" autocomplete="off">
+      </div>
+      <div class="field">
+        <label for="role">Role</label>
+        <select id="role" name="role">
+          <option value="admin">admin</option>
+          <option value="operator" selected>operator</option>
+          <option value="viewer">viewer</option>
+        </select>
+      </div>
+      <div class="field">
+        <button class="btn primary" type="submit">Send invitation</button>
+      </div>
+    </form>
+  </div>
+</section>
+
+{% if !invitations.is_empty() %}
+<section class="card">
+  <div class="card-head"><h2>Pending invitations</h2></div>
+  <div class="card-body">
+    <div class="table-wrap">
+      <table class="data stack">
+        <thead>
+          <tr>
+            <th>Email</th>
+            <th>Role</th>
+            <th>Invited by</th>
+            <th>Expires</th>
+            <th>Status</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for inv in invitations %}
+          <tr>
+            <td data-label="Email">{{ inv.email }}</td>
+            <td data-label="Role"><span class="pill info">{{ inv.role }}</span></td>
+            <td data-label="Invited by">{{ inv.invited_by_email }}</td>
+            <td data-label="Expires">{{ inv.expires_at }}</td>
+            <td data-label="Status">{% match inv.used_at %}{% when Some(_) %}<span class="pill ok">accepted</span>{% when None %}<span class="pill warn">pending</span>{% endmatch %}</td>
+            <td class="actions">
+              {% match inv.used_at %}{% when None %}
+              <form class="inline-form" method="post" action="/settings/users/invitations/{{ inv.id }}/revoke"
+                    data-confirm="Revoke invitation for {{ inv.email }}?">
+                <input type="hidden" name="csrf_token" value="{{ chrome.csrf_token }}">
+                <button class="btn sm danger" type="submit">Revoke</button>
+              </form>
+              {% when Some(_) %}{% endmatch %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+{% endif %}
+{% endif %}
+
+{% endblock %}

@@ -69,7 +69,11 @@ pub async fn create_tree(config: &Config, domain: &str, uid: u32) -> Result<()> 
 pub async fn remove_tree(config: &Config, domain: &str, keep_backups: bool) -> Result<()> {
     let root = config.site_root(domain);
     let targets = if keep_backups {
-        vec![root.join("public_html"), root.join("logs"), root.join("tmp")]
+        vec![
+            root.join("public_html"),
+            root.join("logs"),
+            root.join("tmp"),
+        ]
     } else {
         vec![root.clone()]
     };
@@ -97,7 +101,10 @@ pub async fn disk_usage_mb(config: &Config, domain: &str) -> Result<u64> {
     let output = exec::run(
         config.dry_run,
         "du",
-        &["-sm".to_string(), config.site_root(domain).display().to_string()],
+        &[
+            "-sm".to_string(),
+            config.site_root(domain).display().to_string(),
+        ],
     )
     .await?;
 

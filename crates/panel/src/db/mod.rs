@@ -13,13 +13,14 @@ pub mod schedules;
 pub mod seed;
 pub mod servers;
 pub mod sites;
+pub mod teams;
 pub mod tokens;
 pub mod users;
 
 use anyhow::Context;
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
-use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::SqlitePool;
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use std::path::Path;
 use std::str::FromStr;
 use std::time::Duration;
@@ -66,7 +67,11 @@ pub fn parse_ts(raw: &str) -> DateTime<Utc> {
     if let Ok(dt) = DateTime::parse_from_rfc3339(raw) {
         return dt.with_timezone(&Utc);
     }
-    for fmt in ["%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S%.f"] {
+    for fmt in [
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%d %H:%M:%S%.f",
+    ] {
         if let Ok(naive) = NaiveDateTime::parse_from_str(raw, fmt) {
             return Utc.from_utc_datetime(&naive);
         }

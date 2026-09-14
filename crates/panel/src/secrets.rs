@@ -5,10 +5,10 @@
 //! `<db_dir>/secret.key` with mode 0600, and a warning is logged.
 
 use aes_gcm::{
-    aead::{Aead, KeyInit},
     Aes256Gcm, Nonce,
+    aead::{Aead, KeyInit},
 };
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use rand::Rng;
 use std::path::Path;
 use wp_common::{Error, Result};
@@ -18,6 +18,10 @@ pub struct SecretBox {
 }
 
 impl SecretBox {
+    pub fn from_key(key: [u8; 32]) -> Self {
+        Self { key }
+    }
+
     /// Load or generate the encryption key.
     pub fn load_or_generate(db_dir: &Path) -> Result<Self> {
         if let Ok(key_b64) = std::env::var("WP_PANEL_SECRET_KEY") {
@@ -37,8 +41,9 @@ impl SecretBox {
         // Generate a new key and persist it.
         let key_file = db_dir.join("secret.key");
         if key_file.exists() {
-            let contents = std::fs::read_to_string(&key_file)
-                .map_err(|e| Error::internal(format!("failed to read {}: {e}", key_file.display())))?;
+            let contents = std::fs::read_to_string(&key_file).map_err(|e| {
+                Error::internal(format!("failed to read {}: {e}", key_file.display()))
+            })?;
             let key_bytes = BASE64
                 .decode(contents.trim())
                 .map_err(|e| Error::Invalid(format!("invalid secret.key: {e}")))?;

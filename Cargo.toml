@@ -50,6 +50,7 @@ clap = { version = "4", features = ["derive", "env"] }
 humantime = "2"
 serde_urlencoded = "0.7"
 aes-gcm = "0.10"
+urlencoding = "2.1.3"
 
 [profile.release]
 opt-level = 3

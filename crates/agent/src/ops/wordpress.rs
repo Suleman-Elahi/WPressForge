@@ -13,8 +13,20 @@ use wp_common::protocol::InstallWordpress;
 use wp_common::{Error, Result};
 
 const ALLOWED_SUBCOMMANDS: [&str; 14] = [
-    "core", "plugin", "theme", "option", "user", "cache", "db", "search-replace", "cron",
-    "rewrite", "transient", "site", "post", "media",
+    "core",
+    "plugin",
+    "theme",
+    "option",
+    "user",
+    "cache",
+    "db",
+    "search-replace",
+    "cron",
+    "rewrite",
+    "transient",
+    "site",
+    "post",
+    "media",
 ];
 
 pub async fn install(
@@ -25,7 +37,12 @@ pub async fn install(
 ) -> Result<String> {
     let container = site.container_name();
 
-    wp(config, &container, &["core", "download", &format!("--locale={}", request.locale)]).await?;
+    wp(
+        config,
+        &container,
+        &["core", "download", &format!("--locale={}", request.locale)],
+    )
+    .await?;
 
     wp(
         config,
@@ -60,8 +77,18 @@ pub async fn install(
     .await?;
 
     // Sensible defaults for a fresh install.
-    wp(config, &container, &["rewrite", "structure", "/%postname%/"]).await?;
-    wp(config, &container, &["option", "update", "blog_public", "1"]).await?;
+    wp(
+        config,
+        &container,
+        &["rewrite", "structure", "/%postname%/"],
+    )
+    .await?;
+    wp(
+        config,
+        &container,
+        &["option", "update", "blog_public", "1"],
+    )
+    .await?;
 
     version(config, site).await
 }
@@ -121,8 +148,13 @@ pub async fn passthrough(
             "`wp {subcommand}` is not allowed by this agent"
         )));
     }
-    if args.iter().any(|arg| arg.contains(';') || arg.contains('`') || arg.contains('$')) {
-        return Err(Error::invalid("wp-cli arguments contain shell metacharacters"));
+    if args
+        .iter()
+        .any(|arg| arg.contains(';') || arg.contains('`') || arg.contains('$'))
+    {
+        return Err(Error::invalid(
+            "wp-cli arguments contain shell metacharacters",
+        ));
     }
 
     let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
@@ -303,9 +335,13 @@ pub async fn theme_action(
 }
 
 pub async fn update_all_plugins(config: &Config, site: &SiteRecord) -> Result<()> {
-    wp(config, &site.container_name(), &["plugin", "update", "--all"])
-        .await
-        .map(|_| ())
+    wp(
+        config,
+        &site.container_name(),
+        &["plugin", "update", "--all"],
+    )
+    .await
+    .map(|_| ())
 }
 
 pub async fn reset_wp_password(
@@ -316,10 +352,8 @@ pub async fn reset_wp_password(
     // Generate a random password, never log it.
     let mut bytes = [0u8; 24];
     rand::RngCore::fill_bytes(&mut rand::rng(), &mut bytes);
-    let password = base64::Engine::encode(
-        &base64::engine::general_purpose::URL_SAFE_NO_PAD,
-        &bytes,
-    );
+    let password =
+        base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, &bytes);
     let password = password.chars().take(20).collect::<String>();
     wp(
         config,
@@ -337,7 +371,10 @@ pub async fn reset_wp_password(
 
 pub async fn run_cron_event(config: &Config, site: &SiteRecord, hook: &str) -> Result<()> {
     // Reject anything that isn't a simple hook name.
-    if hook.chars().any(|c| !c.is_ascii_alphanumeric() && c != '_' && c != '-') {
+    if hook
+        .chars()
+        .any(|c| !c.is_ascii_alphanumeric() && c != '_' && c != '-')
+    {
         return Err(Error::invalid("invalid cron hook name"));
     }
     wp(
@@ -375,8 +412,7 @@ pub async fn set_wp_cron(config: &Config, site: &SiteRecord, mode: CronMode) -> 
 pub async fn purge_urls(config: &Config, site: &SiteRecord, urls: &[String]) -> Result<()> {
     // Each URL is purged via the ngx_cache_purge location.
     // When ngx_cache_purge is absent, we fall back to a full cache flush.
-    let cache_zone = site.domain.replace('.', "_");
-    let purge_base = format!("/wp-panel-purge");
+    let purge_base = "/wp-panel-purge";
 
     for url in urls {
         // Build the purge URL: /wp-panel-purge + original path

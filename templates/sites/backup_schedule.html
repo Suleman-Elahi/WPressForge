@@ -1,0 +1,71 @@
+<div class="card-body" style="border-bottom: 1px solid var(--border);">
+  {% if destinations.is_empty() %}
+  <div class="banner info">
+    <p>No backup destinations configured. <a href="/settings/destinations">Add a destination</a> to enable scheduled backups.</p>
+  </div>
+  {% else %}
+  <form method="post" action="/sites/{{ site.site.id }}/backup-schedule">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    
+    <div class="field-row">
+      <div class="field">
+        <label for="destination_id">Destination</label>
+        <select name="destination_id" id="destination_id">
+          {% for dest in destinations %}
+          <option value="{{ dest.id }}" {% match selected_dest_id %}{% when Some with (id) %}{% if id == &dest.id %}selected{% endif %}{% when None %}{% endmatch %}>
+            {{ dest.name }} ({{ dest.provider }})
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="scope">Scope</label>
+        <select name="scope" id="scope">
+          <option value="full" {% if scope == "full" %}selected{% endif %}>Full (Files & DB)</option>
+          <option value="files_only" {% if scope == "files_only" %}selected{% endif %}>Files Only</option>
+          <option value="database_only" {% if scope == "database_only" %}selected{% endif %}>Database Only</option>
+        </select>
+      </div>
+      
+      <div class="field">
+        <label for="interval_minutes">Interval</label>
+        <select name="interval_minutes" id="interval_minutes">
+          <option value="360" {% if interval_minutes == 360 %}selected{% endif %}>Every 6 hours</option>
+          <option value="720" {% if interval_minutes == 720 %}selected{% endif %}>Every 12 hours</option>
+          <option value="1440" {% if interval_minutes == 1440 %}selected{% endif %}>Daily</option>
+          <option value="10080" {% if interval_minutes == 10080 %}selected{% endif %}>Weekly</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="field mt">
+      <label class="check">
+        <input type="checkbox" name="enabled" {% if enabled %}checked{% endif %}>
+        <span>Enable schedule</span>
+      </label>
+    </div>
+    
+    <div class="btn-row mt">
+      <button type="submit" class="btn primary">Save schedule</button>
+      {% if schedule.is_some() %}
+      <button type="submit" class="btn danger ghost" form="delete-schedule-form">Delete schedule</button>
+      {% endif %}
+    </div>
+  </form>
+  
+  {% if schedule.is_some() %}
+  <form id="delete-schedule-form" method="post" action="/sites/{{ site.site.id }}/backup-schedule/delete" class="hidden">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  </form>
+  {% endif %}
+
+  {% if let Some(sched) = schedule %}
+  <p class="muted mt text-sm">
+    Status: {% if sched.enabled %}Active{% else %}Paused{% endif %} &bull; 
+    Last run: {% if let Some(last) = sched.last_run_at %}{{ last }}{% else %}Never{% endif %} &bull; 
+    Next run: {% if let Some(next) = sched.next_run_at %}{{ next }}{% else %}Not scheduled{% endif %}
+  </p>
+  {% endif %}
+  {% endif %}
+</div>

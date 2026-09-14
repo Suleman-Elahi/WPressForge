@@ -8,8 +8,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use wp_common::protocol::{Operation, OperationEnvelope, OperationResult};
 use wp_common::Error;
+use wp_common::protocol::{Operation, OperationEnvelope, OperationResult};
 
 /// Connection parameters for a specific server.
 pub struct ServerConnection {
@@ -36,7 +36,6 @@ impl AgentClient {
             .connect_timeout(Duration::from_secs(5))
             .user_agent(concat!("wp-panel/", env!("CARGO_PKG_VERSION")))
             // Plain HTTP loopback only — production agents use TLS with a pin.
-            .danger_accept_invalid_certs(true)
             .build()?;
         Ok(Self {
             default,
@@ -81,6 +80,10 @@ impl AgentClient {
 
         let url = format!("{}/v1/operations", conn.url.trim_end_matches('/'));
 
+        if conn.fingerprint.is_none() && url.starts_with("https:") {
+            return Err(Error::Unreachable("HTTPS requires a fingerprint".into()));
+        }
+
         let client = self
             .client_for(conn.fingerprint.as_deref())
             .map_err(|e| Error::Unreachable(format!("building client for {url}: {e}")))?;
@@ -119,8 +122,12 @@ impl AgentClient {
         conn: &ServerConnection,
         operation: Operation,
     ) -> Result<wp_common::protocol::OperationData, Error> {
-        let mut envelope = OperationEnvelope::new(operation);
+        let envelope = OperationEnvelope::new(operation);
         let url = format!("{}/v1/operations", conn.url.trim_end_matches('/'));
+
+        if conn.fingerprint.is_none() && url.starts_with("https:") {
+            return Err(Error::Unreachable("HTTPS requires a fingerprint".into()));
+        }
 
         let client = self
             .client_for(conn.fingerprint.as_deref())
@@ -147,21 +154,110 @@ impl AgentClient {
         if result.success {
             Ok(result.data)
         } else {
-            Err(result.error.unwrap_or_else(|| Error::internal("agent query failed")))
+            Err(result
+                .error
+                .unwrap_or_else(|| Error::internal("agent query failed")))
         }
+    }
+}
+
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+use sha2::Digest;
+
+#[derive(Debug)]
+struct FingerprintVerifier(String);
+
+impl ServerCertVerifier for FingerprintVerifier {
+    fn verify_server_cert(
+        &self,
+        end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: UnixTime,
+    ) -> Result<ServerCertVerified, rustls::Error> {
+        let hash = sha2::Sha256::digest(end_entity.as_ref());
+        let mut expected = self.0.trim().to_lowercase();
+        if expected.starts_with("sha256:") {
+            expected = expected[7..].to_string();
+        }
+        expected.retain(|c| c != ':');
+
+        let mut expected_bytes = [0u8; 32];
+        if expected.len() == 64 {
+            for i in 0..32 {
+                if let Ok(b) = u8::from_str_radix(&expected[i * 2..i * 2 + 2], 16) {
+                    expected_bytes[i] = b;
+                } else {
+                    return Err(rustls::Error::General("invalid fingerprint hex".into()));
+                }
+            }
+        } else {
+            return Err(rustls::Error::General("invalid fingerprint length".into()));
+        }
+
+        let hash_bytes: [u8; 32] = hash.into();
+        let mut diff = 0;
+        for (a, b) in expected_bytes.iter().zip(hash_bytes.iter()) {
+            diff |= a ^ b;
+        }
+
+        if diff == 0 {
+            Ok(ServerCertVerified::assertion())
+        } else {
+            Err(rustls::Error::General("fingerprint mismatch".into()))
+        }
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &rustls::crypto::ring::default_provider().signature_verification_algorithms,
+        )
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &rustls::crypto::ring::default_provider().signature_verification_algorithms,
+        )
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        rustls::crypto::ring::default_provider()
+            .signature_verification_algorithms
+            .supported_schemes()
     }
 }
 
 /// Build a `reqwest::Client` that only accepts the server whose leaf
 /// certificate matches `expected_fingerprint` (SHA-256, colon-separated hex).
-fn build_pinned_client(_expected_fingerprint: &str) -> reqwest::Result<reqwest::Client> {
-    // TODO(M1 §3.2): Replace with a proper custom connector that verifies
-    // the leaf certificate SHA-256 fingerprint.  For now we accept invalid
-    // certs and rely on the bearer token for authentication.
+fn build_pinned_client(expected_fingerprint: &str) -> reqwest::Result<reqwest::Client> {
+    let verifier = std::sync::Arc::new(FingerprintVerifier(expected_fingerprint.to_string()));
+    let tls_config = rustls::ClientConfig::builder()
+        .dangerous()
+        .with_custom_certificate_verifier(verifier)
+        .with_no_client_auth();
+
     reqwest::Client::builder()
         .timeout(Duration::from_secs(300))
         .connect_timeout(Duration::from_secs(5))
         .user_agent(concat!("wp-panel/", env!("CARGO_PKG_VERSION")))
-        .danger_accept_invalid_certs(true)
+        .use_preconfigured_tls(tls_config)
         .build()
 }

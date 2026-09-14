@@ -1,4 +1,4 @@
-use super::{parse_ts, Db};
+use super::{Db, parse_ts};
 use sqlx::Row;
 use wp_common::models::AuditEntry;
 

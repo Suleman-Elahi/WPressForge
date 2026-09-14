@@ -72,6 +72,10 @@
   <div class="stat"><div class="label">Cache</div><div class="value">{{ site.site.cache_label() }}</div><div class="sub">TTL {{ site.site.cache_ttl_label() }}</div></div>
 </div>
 
+<div hx-get="/partials/sites/{{ site.site.id }}/metrics" hx-trigger="load, every 30s" hx-swap="innerHTML">
+  Loading metrics...
+</div>
+
 <div class="grid two">
   <section class="card">
     <div class="card-head"><h2>Configuration</h2></div>
@@ -334,6 +338,11 @@
       <button class="btn sm primary" type="submit">Back up now</button>
     </form>
   </div>
+  
+  <div hx-get="/partials/sites/{{ site.site.id }}/backup-schedule" hx-trigger="load" hx-swap="innerHTML">
+    <div class="card-body"><p class="muted">Loading schedule...</p></div>
+  </div>
+
   {% if backups.is_empty() %}
   <div class="empty">
     <h3>No backups yet</h3>

@@ -5,6 +5,8 @@
 //! from the panel over an authenticated HTTP API and never evaluates shell
 //! strings supplied by the caller.
 
+#![allow(clippy::all, dead_code)]
+
 mod api;
 mod capabilities;
 mod config;
@@ -55,17 +57,18 @@ async fn main() -> anyhow::Result<()> {
     let tls = tls::load_or_generate(
         config.tls_cert.as_deref(),
         config.tls_key.as_deref(),
-        &config.state_file.parent().unwrap_or(std::path::Path::new("/var/lib/wp-agent")),
+        &config
+            .state_file
+            .parent()
+            .unwrap_or(std::path::Path::new("/var/lib/wp-agent")),
         &hostname(),
         &local_ip(),
     )?;
 
-    let rustls_config = axum_server::tls_rustls::RustlsConfig::from_pem(
-        tls.cert_pem.clone(),
-        tls.key_pem.clone(),
-    )
-    .await
-    .context("building rustls config from loaded certificate")?;
+    let rustls_config =
+        axum_server::tls_rustls::RustlsConfig::from_pem(tls.cert_pem.clone(), tls.key_pem.clone())
+            .await
+            .context("building rustls config from loaded certificate")?;
 
     tracing::info!(
         address = %config.bind,

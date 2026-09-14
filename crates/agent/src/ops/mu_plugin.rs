@@ -7,12 +7,11 @@
 //! emitted and WordPress still works — the hooks simply have no effect.
 
 use crate::config::Config;
-use crate::exec;
 use crate::store::SiteRecord;
 use wp_common::Result;
 
 /// Content of the must-use plugin. Pure function — unit testable, no I/O.
-pub fn mu_plugin_php(domain: &str) -> String {
+pub fn mu_plugin_php(_domain: &str) -> String {
     format!(
         r#"<?php
 /**

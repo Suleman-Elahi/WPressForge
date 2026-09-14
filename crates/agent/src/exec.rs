@@ -8,7 +8,7 @@ use tokio::process::Command;
 use wp_common::protocol::StepReport;
 use wp_common::{Error, Result};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CommandOutput {
     pub stdout: String,
     pub stderr: String,
@@ -64,14 +64,11 @@ pub async fn run_with_env<S: AsRef<OsStr> + std::fmt::Debug>(
     for (key, value) in env {
         cmd.env(key, value);
     }
-    let output: Output = cmd
-        .output()
-        .await
-        .map_err(|e| Error::Command {
-            command: printable.clone(),
-            status: -1,
-            stderr: e.to_string(),
-        })?;
+    let output: Output = cmd.output().await.map_err(|e| Error::Command {
+        command: printable.clone(),
+        status: -1,
+        stderr: e.to_string(),
+    })?;
 
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();

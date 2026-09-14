@@ -1,7 +1,7 @@
 //! First-run bootstrap: the admin account and (optionally) an example server
 //! with a few sites so the UI can be evaluated before a node is attached.
 
-use super::{servers, sites, users, Db};
+use super::{Db, servers, sites, users};
 use crate::auth;
 use chrono::{Duration, Utc};
 use wp_common::models::{
@@ -67,23 +67,72 @@ pub async fn demo_data(db: &Db) -> anyhow::Result<()> {
             sites: 3,
             containers: 4,
             services: vec![
-                ServiceHealth { name: "nginx".into(), healthy: true, detail: Some("1.27".into()) },
-                ServiceHealth { name: "docker".into(), healthy: true, detail: Some("27.3".into()) },
-                ServiceHealth { name: "mariadb".into(), healthy: true, detail: Some("11.4".into()) },
-                ServiceHealth { name: "agent".into(), healthy: true, detail: Some("0.1.0".into()) },
+                ServiceHealth {
+                    name: "nginx".into(),
+                    healthy: true,
+                    detail: Some("1.27".into()),
+                },
+                ServiceHealth {
+                    name: "docker".into(),
+                    healthy: true,
+                    detail: Some("27.3".into()),
+                },
+                ServiceHealth {
+                    name: "mariadb".into(),
+                    healthy: true,
+                    detail: Some("11.4".into()),
+                },
+                ServiceHealth {
+                    name: "agent".into(),
+                    healthy: true,
+                    detail: Some("0.1.0".into()),
+                },
             ],
             php_versions: vec![
-                PhpUsage { version: PhpVersion::Php83, sites: 1 },
-                PhpUsage { version: PhpVersion::Php84, sites: 2 },
+                PhpUsage {
+                    version: PhpVersion::Php83,
+                    sites: 1,
+                },
+                PhpUsage {
+                    version: PhpVersion::Php84,
+                    sites: 2,
+                },
             ],
         }),
     )
     .await?;
 
     let specs = [
-        ("example.com", "Example Shop", PhpVersion::Php84, DatabaseMode::Dedicated, 2.0, 2048, SiteStatus::Online, true),
-        ("blog.example.com", "Example Blog", PhpVersion::Php83, DatabaseMode::Shared, 1.0, 1024, SiteStatus::Online, true),
-        ("staging.example.com", "Example Shop (staging)", PhpVersion::Php84, DatabaseMode::Shared, 1.0, 1024, SiteStatus::Stopped, false),
+        (
+            "example.com",
+            "Example Shop",
+            PhpVersion::Php84,
+            DatabaseMode::Dedicated,
+            2.0,
+            2048,
+            SiteStatus::Online,
+            true,
+        ),
+        (
+            "blog.example.com",
+            "Example Blog",
+            PhpVersion::Php83,
+            DatabaseMode::Shared,
+            1.0,
+            1024,
+            SiteStatus::Online,
+            true,
+        ),
+        (
+            "staging.example.com",
+            "Example Shop (staging)",
+            PhpVersion::Php84,
+            DatabaseMode::Shared,
+            1.0,
+            1024,
+            SiteStatus::Stopped,
+            false,
+        ),
     ];
 
     for (domain, title, php, mode, cpu, mem, status, ssl) in specs {

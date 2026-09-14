@@ -112,7 +112,9 @@ pub async fn upsert(db: &SqlitePool, form: ScheduleForm) -> Result<Schedule> {
         .await
         .map_err(|e| Error::Internal(format!("database error: {e}")))?;
 
-        get(db, schedule.id).await?.ok_or_else(|| Error::Internal("failed to fetch updated schedule".into()))
+        get(db, schedule.id)
+            .await?
+            .ok_or_else(|| Error::Internal("failed to fetch updated schedule".into()))
     } else {
         let result = sqlx::query(
             "INSERT INTO backup_schedules (site_id, destination_id, scope, interval_minutes, enabled, keep_hourly, keep_daily, keep_weekly, keep_monthly) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
@@ -131,26 +133,21 @@ pub async fn upsert(db: &SqlitePool, form: ScheduleForm) -> Result<Schedule> {
         .map_err(|e| Error::Internal(format!("database error: {e}")))?;
 
         let id = result.last_insert_rowid();
-        get(db, id).await?.ok_or_else(|| Error::Internal("failed to fetch created schedule".into()))
+        get(db, id)
+            .await?
+            .ok_or_else(|| Error::Internal("failed to fetch created schedule".into()))
     }
 }
 
 /// Mark a schedule as run and set next_run_at.
-pub async fn mark_scheduled(
-    db: &SqlitePool,
-    id: i64,
-    now: &str,
-    next_run: &str,
-) -> Result<()> {
-    sqlx::query(
-        "UPDATE backup_schedules SET last_run_at = ?1, next_run_at = ?2 WHERE id = ?3",
-    )
-    .bind(now)
-    .bind(next_run)
-    .bind(id)
-    .execute(db)
-    .await
-    .map_err(|e| Error::Internal(format!("database error: {e}")))?;
+pub async fn mark_scheduled(db: &SqlitePool, id: i64, now: &str, next_run: &str) -> Result<()> {
+    sqlx::query("UPDATE backup_schedules SET last_run_at = ?1, next_run_at = ?2 WHERE id = ?3")
+        .bind(now)
+        .bind(next_run)
+        .bind(id)
+        .execute(db)
+        .await
+        .map_err(|e| Error::Internal(format!("database error: {e}")))?;
 
     Ok(())
 }

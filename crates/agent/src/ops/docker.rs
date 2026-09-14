@@ -4,8 +4,8 @@
 use crate::config::Config;
 use crate::exec;
 use crate::store::SiteRecord;
-use wp_common::models::PhpVersion;
 use wp_common::Result;
+use wp_common::models::PhpVersion;
 
 /// Starts the PHP-FPM container for a site and returns its container id.
 pub async fn start_php(config: &Config, site: &SiteRecord, version: PhpVersion) -> Result<String> {
@@ -62,9 +62,13 @@ pub async fn start_php(config: &Config, site: &SiteRecord, version: PhpVersion) 
 }
 
 pub async fn stop(config: &Config, container: &str) -> Result<()> {
-    exec::run(config.dry_run, "docker", &["stop", "--time", "20", container])
-        .await
-        .map(|_| ())
+    exec::run(
+        config.dry_run,
+        "docker",
+        &["stop", "--time", "20", container],
+    )
+    .await
+    .map(|_| ())
 }
 
 pub async fn remove(config: &Config, container: &str) -> Result<()> {
@@ -84,12 +88,7 @@ pub async fn healthy(config: &Config, container: &str) -> Result<bool> {
     let output = exec::run(
         config.dry_run,
         "docker",
-        &[
-            "inspect",
-            "--format",
-            "{{.State.Running}}",
-            container,
-        ],
+        &["inspect", "--format", "{{.State.Running}}", container],
     )
     .await?;
 
@@ -103,7 +102,11 @@ pub async fn pull(config: &Config, version: PhpVersion) -> Result<()> {
 }
 
 /// Runs a command inside the site container as the site user.
-pub async fn exec_in(config: &Config, container: &str, argv: &[String]) -> Result<exec::CommandOutput> {
+pub async fn exec_in(
+    config: &Config,
+    container: &str,
+    argv: &[String],
+) -> Result<exec::CommandOutput> {
     let mut args = vec![
         "exec".to_string(),
         "--workdir".to_string(),
@@ -122,10 +125,18 @@ pub async fn container_count(config: &Config) -> Result<u32> {
     )
     .await?;
 
-    Ok(output.trimmed_stdout().lines().filter(|l| !l.is_empty()).count() as u32)
+    Ok(output
+        .trimmed_stdout()
+        .lines()
+        .filter(|l| !l.is_empty())
+        .count() as u32)
 }
 
 /// Container names are versioned so a PHP switch can run both side by side.
 pub fn container_name(domain: &str, version: PhpVersion) -> String {
-    format!("wp-{}-php{}", domain.replace('.', "-"), version.as_str().replace('.', ""))
+    format!(
+        "wp-{}-php{}",
+        domain.replace('.', "-"),
+        version.as_str().replace('.', "")
+    )
 }

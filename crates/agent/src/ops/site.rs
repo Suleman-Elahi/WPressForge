@@ -8,7 +8,9 @@ use wp_common::models::{
     BackupScope, CacheSettings, PhpVersion, ResourceLimits, RetentionPolicy, SiteMetricSample,
     SiteStatus,
 };
-use wp_common::protocol::{CreateSite, InstallWordpress, LogStream, OperationData, OperationResult};
+use wp_common::protocol::{
+    CreateSite, InstallWordpress, LogStream, OperationData, OperationResult,
+};
 use wp_common::{Error, Result};
 
 /// Create user -> filesystem -> database -> container -> WordPress -> Nginx ->
@@ -33,7 +35,10 @@ pub async fn create(state: &AgentState, request: CreateSite) -> Result<Operation
     };
 
     steps
-        .step("Allocate system user", filesystem::ensure_user(config, &record.domain, uid))
+        .step(
+            "Allocate system user",
+            filesystem::ensure_user(config, &record.domain, uid),
+        )
         .await?;
     steps
         .step(
@@ -101,7 +106,10 @@ pub async fn create(state: &AgentState, request: CreateSite) -> Result<Operation
     }
 
     let healthy = steps
-        .step("Health check", docker::healthy(config, &record.container_name()))
+        .step(
+            "Health check",
+            docker::healthy(config, &record.container_name()),
+        )
         .await?;
     record.status = if healthy {
         SiteStatus::Online
@@ -130,13 +138,18 @@ pub async fn delete(
     let mut steps = Steps::new();
 
     steps
-        .step("Stop container", docker::remove(config, &record.container_name()))
+        .step(
+            "Stop container",
+            docker::remove(config, &record.container_name()),
+        )
         .await?;
     steps
         .step("Remove Nginx vhost", state.web.remove_site(&record.domain))
         .await?;
     steps.step("Reload Nginx", state.web.reload()).await?;
-    steps.step("Drop database", database::drop(config, &record)).await?;
+    steps
+        .step("Drop database", database::drop(config, &record))
+        .await?;
     steps
         .step(
             "Remove files",
@@ -144,7 +157,10 @@ pub async fn delete(
         )
         .await?;
     steps
-        .step("Release system user", filesystem::remove_user(config, &record.domain))
+        .step(
+            "Release system user",
+            filesystem::remove_user(config, &record.domain),
+        )
         .await?;
 
     state.store.remove(site_id).await?;
@@ -163,7 +179,10 @@ pub async fn start(state: &AgentState, site_id: i64) -> Result<OperationResult> 
         )
         .await?;
     let healthy = steps
-        .step("Health check", docker::healthy(config, &record.container_name()))
+        .step(
+            "Health check",
+            docker::healthy(config, &record.container_name()),
+        )
         .await?;
 
     record.container_id = Some(container_id);
@@ -183,7 +202,10 @@ pub async fn stop(state: &AgentState, site_id: i64) -> Result<OperationResult> {
     let mut steps = Steps::new();
 
     steps
-        .step("Stop container", docker::stop(config, &record.container_name()))
+        .step(
+            "Stop container",
+            docker::stop(config, &record.container_name()),
+        )
         .await?;
 
     record.status = SiteStatus::Stopped;
@@ -197,10 +219,16 @@ pub async fn restart(state: &AgentState, site_id: i64) -> Result<OperationResult
     let mut steps = Steps::new();
 
     steps
-        .step("Restart container", docker::restart(config, &record.container_name()))
+        .step(
+            "Restart container",
+            docker::restart(config, &record.container_name()),
+        )
         .await?;
     steps
-        .step("Health check", docker::healthy(config, &record.container_name()))
+        .step(
+            "Health check",
+            docker::healthy(config, &record.container_name()),
+        )
         .await?;
 
     Ok(OperationResult::ok(OperationData::None).with_steps(steps.into_reports()))
@@ -250,17 +278,25 @@ pub async fn switch_php(
     }
 
     let mut steps = Steps::new();
-    steps.step("Pull target PHP image", docker::pull(config, version)).await?;
+    steps
+        .step("Pull target PHP image", docker::pull(config, version))
+        .await?;
 
     let mut target = record.clone();
     target.php_version = version;
     let container_id = steps
-        .step("Start new container", docker::start_php(config, &target, version))
+        .step(
+            "Start new container",
+            docker::start_php(config, &target, version),
+        )
         .await?;
 
     let new_container = docker::container_name(&record.domain, version);
     let healthy = steps
-        .step("Health check new container", docker::healthy(config, &new_container))
+        .step(
+            "Health check new container",
+            docker::healthy(config, &new_container),
+        )
         .await?;
 
     if !healthy {
@@ -385,10 +421,11 @@ pub async fn issue_certificate(
         .await?;
     steps.step("Reload Nginx", state.web.reload()).await?;
 
-    Ok(
-        OperationResult::ok(OperationData::Certificate { domains, expires_at })
-            .with_steps(steps.into_reports()),
-    )
+    Ok(OperationResult::ok(OperationData::Certificate {
+        domains,
+        expires_at,
+    })
+    .with_steps(steps.into_reports()))
 }
 
 pub async fn renew_certificate(state: &AgentState, site_id: i64) -> Result<OperationResult> {
@@ -444,7 +481,10 @@ pub async fn clear_cache(state: &AgentState, site_id: i64) -> Result<OperationRe
         .step("Purge FastCGI cache", state.web.purge(&record.domain))
         .await?;
     steps
-        .step("Flush object cache", wordpress::flush_cache(config, &record))
+        .step(
+            "Flush object cache",
+            wordpress::flush_cache(config, &record),
+        )
         .await?;
 
     Ok(OperationResult::ok(OperationData::None).with_steps(steps.into_reports()))
@@ -508,7 +548,10 @@ pub async fn update_wordpress(state: &AgentState, site_id: i64) -> Result<Operat
         .step("Update core", wordpress::update_core(config, &record))
         .await?;
     steps
-        .step("Health check", docker::healthy(config, &record.container_name()))
+        .step(
+            "Health check",
+            docker::healthy(config, &record.container_name()),
+        )
         .await?;
 
     Ok(OperationResult::ok(OperationData::SiteStatus {
@@ -532,7 +575,10 @@ pub async fn backup(
 
     let mut steps = Steps::new();
     let snapshot = steps
-        .step("Snapshot site", backup::create(config, &record, scope, &target))
+        .step(
+            "Snapshot site",
+            backup::create(config, &record, scope, &target),
+        )
         .await?;
     steps
         .step(
@@ -566,10 +612,16 @@ pub async fn restore(
         )
         .await?;
     steps
-        .step("Restart container", docker::restart(config, &record.container_name()))
+        .step(
+            "Restart container",
+            docker::restart(config, &record.container_name()),
+        )
         .await?;
     steps
-        .step("Health check", docker::healthy(config, &record.container_name()))
+        .step(
+            "Health check",
+            docker::healthy(config, &record.container_name()),
+        )
         .await?;
 
     Ok(OperationResult::ok(OperationData::None).with_steps(steps.into_reports()))
@@ -597,7 +649,31 @@ pub async fn tail_logs(
     // Validate grep pattern: max 64 chars, no regex metacharacters (use -F for fixed string).
     let safe_grep = grep_pattern
         .filter(|p| !p.is_empty() && p.len() <= 64)
-        .map(|p| p.replace(|c: char| matches!(c, '\\' | '[' | ']' | '(' | ')' | '+' | '?' | '{' | '}' | '^' | '$' | '.' | '*' | '|' | '&' | ';'), ""));
+        .map(|p| {
+            p.replace(
+                |c: char| {
+                    matches!(
+                        c,
+                        '\\' | '['
+                            | ']'
+                            | '('
+                            | ')'
+                            | '+'
+                            | '?'
+                            | '{'
+                            | '}'
+                            | '^'
+                            | '$'
+                            | '.'
+                            | '*'
+                            | '|'
+                            | '&'
+                            | ';'
+                    )
+                },
+                "",
+            )
+        });
 
     let output = if let Some(ref pattern) = safe_grep {
         crate::exec::run(
@@ -605,7 +681,12 @@ pub async fn tail_logs(
             "sh",
             &[
                 "-c",
-                &format!("tail -n {} {} | grep -F {}", lines.clamp(1, 5000), path, pattern),
+                &format!(
+                    "tail -n {} {} | grep -F {}",
+                    lines.clamp(1, 5000),
+                    path,
+                    pattern
+                ),
             ],
         )
         .await?
@@ -636,14 +717,16 @@ pub async fn clone(
 
     // Refuse if source and target are the same domain.
     if source.domain == request.target_domain {
-        return Err(Error::Invalid("source and target domains are the same".into()));
+        return Err(Error::Invalid(
+            "source and target domains are the same".into(),
+        ));
     }
 
     let mut steps = Steps::new();
 
     // 1. Allocate target UID and create site record.
     let target_uid = state.store.next_uid(config.uid_base).await;
-    let target_record = SiteRecord {
+    let mut target_record = SiteRecord {
         site_id: request.target_site_id,
         domain: request.target_domain.clone(),
         uid: target_uid,
@@ -718,7 +801,7 @@ pub async fn clone(
                     &format!(
                         "mysqldump -u{} -p'{}' {} | mysql -u{} -p'{}' {}",
                         source.db_name,
-                        "",  // Source DB password (from wp-config)
+                        "", // Source DB password (from wp-config)
                         source.db_name,
                         credentials.user,
                         credentials.password,
@@ -750,7 +833,12 @@ pub async fn clone(
         steps
             .step(
                 "Search & replace URLs",
-                wordpress::search_replace(config, &target_record, &source.domain, &request.target_domain),
+                wordpress::search_replace(
+                    config,
+                    &target_record,
+                    &source.domain,
+                    &request.target_domain,
+                ),
             )
             .await?;
     }
@@ -802,7 +890,7 @@ pub async fn clone(
         )
         .await?;
 
-    let status = if healthy {
+    target_record.status = if healthy {
         SiteStatus::Online
     } else {
         SiteStatus::Failed
@@ -831,7 +919,7 @@ pub async fn get_site_metrics(
 
     // Collect container stats via docker stats --no-stream.
     let output = crate::exec::run(
-        false,
+        config.dry_run,
         "docker",
         &[
             "stats",
@@ -849,11 +937,7 @@ pub async fn get_site_metrics(
         let parts: Vec<&str> = line.split('\t').collect();
         if parts.len() >= 3 {
             let name = parts[0].trim();
-            let cpu_pct: f32 = parts[1]
-                .trim()
-                .trim_end_matches('%')
-                .parse()
-                .unwrap_or(0.0);
+            let cpu_pct: f32 = parts[1].trim().trim_end_matches('%').parse().unwrap_or(0.0);
             let mem_str = parts[2].trim();
             let mem_bytes = parse_memory_value(mem_str);
             container_stats.insert(name.to_string(), (cpu_pct, mem_bytes));
@@ -912,10 +996,7 @@ fn parse_single_memory(s: &str) -> u64 {
     }
 }
 
-async fn get_php_fpm_busy(
-    state: &AgentState,
-    record: &SiteRecord,
-) -> u32 {
+async fn get_php_fpm_busy(state: &AgentState, record: &SiteRecord) -> u32 {
     let config = &state.config;
     // Try reading PHP-FPM status page.
     let result = crate::exec::run(

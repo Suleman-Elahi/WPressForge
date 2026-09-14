@@ -11,6 +11,9 @@ pub enum AppError {
     #[error("{0}")]
     BadRequest(String),
 
+    #[error("{0}")]
+    Forbidden(String),
+
     #[error("agent error: {0}")]
     Agent(#[from] wp_common::Error),
 
@@ -31,6 +34,7 @@ impl AppError {
         match self {
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::BadRequest(_) => StatusCode::UNPROCESSABLE_ENTITY,
+            Self::Forbidden(_) => StatusCode::FORBIDDEN,
             Self::Agent(e) => {
                 StatusCode::from_u16(e.status_code()).unwrap_or(StatusCode::BAD_GATEWAY)
             }

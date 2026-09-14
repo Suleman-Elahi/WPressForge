@@ -35,25 +35,22 @@ impl CsrfKey {
         let expected_previous = self.hmac_bytes(session_token, previous);
 
         // Decode the presented token.
-        let presented_bytes = match base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .decode(presented)
-        {
-            Ok(b) => b,
-            Err(_) => return false,
-        };
+        let presented_bytes =
+            match base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(presented) {
+                Ok(b) => b,
+                Err(_) => return false,
+            };
 
         if presented_bytes.len() != 32 {
             return false;
         }
 
         // Constant-time compare against both expected values.
-        let mut mac =
-            HmacSha256::new_from_slice(&self.0).expect("HMAC accepts any key length");
+        let mut mac = HmacSha256::new_from_slice(&self.0).expect("HMAC accepts any key length");
         mac.update(&presented_bytes);
         let ok1 = mac.verify_slice(&expected_current).is_ok();
 
-        let mut mac =
-            HmacSha256::new_from_slice(&self.0).expect("HMAC accepts any key length");
+        let mut mac = HmacSha256::new_from_slice(&self.0).expect("HMAC accepts any key length");
         mac.update(&presented_bytes);
         let ok2 = mac.verify_slice(&expected_previous).is_ok();
 
@@ -62,8 +59,7 @@ impl CsrfKey {
 
     fn hmac_bytes(&self, session_token: &str, bucket: i64) -> Vec<u8> {
         let payload = format!("{session_token}:{bucket}");
-        let mut mac =
-            HmacSha256::new_from_slice(&self.0).expect("HMAC accepts any key length");
+        let mut mac = HmacSha256::new_from_slice(&self.0).expect("HMAC accepts any key length");
         mac.update(payload.as_bytes());
         mac.finalize().into_bytes().to_vec()
     }

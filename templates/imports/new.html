@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1>Import existing site</h1>
+    <p>Connect to a remote server over SSH to copy files and database directly.</p>
+  </div>
+</div>
+
+<form method="post" action="/imports/inspect" class="grid two" style="align-items:start">
+  <input type="hidden" name="csrf_token" value="{{ chrome.csrf_token }}">
+  <section class="card">
+    <div class="card-head"><h2>Target</h2></div>
+    <div class="card-body">
+      <div class="field">
+        <label for="domain">Domain name</label>
+        <input id="domain" name="domain" type="text" required placeholder="example.com"
+               autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="url">
+      </div>
+      <div class="field">
+        <label for="server_id">Server</label>
+        <select id="server_id" name="server_id" required>
+          {% for row in servers %}
+          <option value="{{ row.server.id }}">{{ row.server.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>Source SSH Credentials</h2></div>
+    <div class="card-body">
+      <div class="field-row">
+        <div class="field" style="flex:2">
+          <label for="ssh_host">Host / IP</label>
+          <input id="ssh_host" name="ssh_host" type="text" required placeholder="1.2.3.4">
+        </div>
+        <div class="field">
+          <label for="ssh_port">Port</label>
+          <input id="ssh_port" name="ssh_port" type="number" required value="22">
+        </div>
+      </div>
+      <div class="field">
+        <label for="ssh_user">User</label>
+        <input id="ssh_user" name="ssh_user" type="text" required placeholder="root">
+      </div>
+      <div class="field">
+        <label>Authentication</label>
+        <div class="radio-cards">
+          <label>
+            <input type="radio" name="ssh_auth" value="password" checked
+                   onchange="document.getElementById('pass-field').style.display='block'; document.getElementById('key-field').style.display='none'">
+            <span>Password</span>
+          </label>
+          <label>
+            <input type="radio" name="ssh_auth" value="key"
+                   onchange="document.getElementById('pass-field').style.display='none'; document.getElementById('key-field').style.display='block'">
+            <span>Private Key</span>
+          </label>
+        </div>
+      </div>
+      <div class="field" id="pass-field">
+        <label for="ssh_pass">Password</label>
+        <input id="ssh_pass" name="ssh_pass" type="password">
+      </div>
+      <div class="field" id="key-field" style="display:none">
+        <label for="ssh_key">Private Key (PEM)</label>
+        <textarea id="ssh_key" name="ssh_key" rows="5" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea>
+      </div>
+      <div class="field">
+        <label for="remote_path">WordPress path</label>
+        <input id="remote_path" name="remote_path" type="text" required value="/var/www/html">
+      </div>
+      <div class="btn-row mt-4">
+        <button class="btn primary" type="submit">Inspect Source</button>
+        <a class="btn ghost" href="/sites">Cancel</a>
+      </div>
+    </div>
+  </section>
+</form>
+
+{% endblock %}

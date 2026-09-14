@@ -2,7 +2,7 @@
 //! encrypted at rest using SecretBox.
 
 use crate::secrets::SecretBox;
-use sqlx::{AssertSqlSafe, Row, SqlitePool};
+use sqlx::{AssertSqlSafe, SqlitePool};
 use wp_common::{Error, Result};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -52,25 +52,33 @@ fn row_to_destination(row: &sqlx::sqlite::SqliteRow) -> Destination {
 }
 
 pub async fn list(db: &SqlitePool) -> Result<Vec<Destination>> {
-    let rows = sqlx::query(AssertSqlSafe(format!("SELECT {COLUMNS} FROM backup_destinations ORDER BY name")))
-        .fetch_all(db)
-        .await
-        .map_err(|e| Error::Internal(format!("database error: {e}")))?;
+    let rows = sqlx::query(AssertSqlSafe(format!(
+        "SELECT {COLUMNS} FROM backup_destinations ORDER BY name"
+    )))
+    .fetch_all(db)
+    .await
+    .map_err(|e| Error::Internal(format!("database error: {e}")))?;
 
     Ok(rows.iter().map(row_to_destination).collect())
 }
 
 pub async fn get(db: &SqlitePool, id: i64) -> Result<Option<Destination>> {
-    let row = sqlx::query(AssertSqlSafe(format!("SELECT {COLUMNS} FROM backup_destinations WHERE id = ?1")))
-        .bind(id)
-        .fetch_optional(db)
-        .await
-        .map_err(|e| Error::Internal(format!("database error: {e}")))?;
+    let row = sqlx::query(AssertSqlSafe(format!(
+        "SELECT {COLUMNS} FROM backup_destinations WHERE id = ?1"
+    )))
+    .bind(id)
+    .fetch_optional(db)
+    .await
+    .map_err(|e| Error::Internal(format!("database error: {e}")))?;
 
     Ok(row.map(|r| row_to_destination(&r)))
 }
 
-pub async fn create(db: &SqlitePool, form: DestinationForm, secrets: &SecretBox) -> Result<Destination> {
+pub async fn create(
+    db: &SqlitePool,
+    form: DestinationForm,
+    secrets: &SecretBox,
+) -> Result<Destination> {
     let secret_sealed = if form.secret.is_empty() {
         None
     } else {
@@ -99,7 +107,9 @@ pub async fn create(db: &SqlitePool, form: DestinationForm, secrets: &SecretBox)
     .map_err(|e| Error::Internal(format!("database error: {e}")))?;
 
     let id = result.last_insert_rowid();
-    get(db, id).await?.ok_or_else(|| Error::Invalid("failed to fetch created destination".into()))
+    get(db, id)
+        .await?
+        .ok_or_else(|| Error::Invalid("failed to fetch created destination".into()))
 }
 
 pub async fn delete(db: &SqlitePool, id: i64) -> Result<()> {
@@ -112,7 +122,10 @@ pub async fn delete(db: &SqlitePool, id: i64) -> Result<()> {
 }
 
 /// Decrypt destination credentials for passing to an agent operation.
-pub fn decrypt_credentials(dest: &Destination, secrets: &SecretBox) -> Result<DestinationCredentials> {
+pub fn decrypt_credentials(
+    dest: &Destination,
+    secrets: &SecretBox,
+) -> Result<DestinationCredentials> {
     let secret = dest
         .secret_sealed
         .as_deref()

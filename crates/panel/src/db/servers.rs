@@ -1,4 +1,4 @@
-use super::{parse_ts, parse_ts_opt, Db};
+use super::{Db, parse_ts, parse_ts_opt};
 use sqlx::{AssertSqlSafe, Row};
 use wp_common::models::{Server, ServerMetrics, ServerStatus};
 
@@ -77,7 +77,9 @@ pub async fn get(db: &Db, id: i64) -> sqlx::Result<Option<ServerRow>> {
 }
 
 pub async fn count(db: &Db) -> sqlx::Result<i64> {
-    sqlx::query_scalar("SELECT COUNT(*) FROM servers").fetch_one(db).await
+    sqlx::query_scalar("SELECT COUNT(*) FROM servers")
+        .fetch_one(db)
+        .await
 }
 
 pub struct NewServer<'a> {

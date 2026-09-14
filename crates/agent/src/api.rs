@@ -4,15 +4,15 @@
 use crate::ops;
 use crate::state::AgentState;
 use axum::extract::State;
-use axum::http::{header, StatusCode};
+use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
-use wp_common::protocol::{OperationEnvelope, OperationResult};
 use wp_common::Error;
+use wp_common::protocol::{OperationEnvelope, OperationResult};
 
 /// Replayed request ids are answered from here instead of being executed twice.
 static SEEN: Mutex<Option<HashMap<String, Instant>>> = Mutex::new(None);
@@ -31,7 +31,10 @@ async fn operations(
     body: Result<Json<OperationEnvelope>, axum::extract::rejection::JsonRejection>,
 ) -> Response {
     if !authorised(&headers, &state.config.token) {
-        return (StatusCode::UNAUTHORIZED, Json(OperationResult::err(Error::Unauthorized)))
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(OperationResult::err(Error::Unauthorized)),
+        )
             .into_response();
     }
 

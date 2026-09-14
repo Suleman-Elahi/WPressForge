@@ -21,6 +21,19 @@
     <div class="banner warn mb" role="alert">{{ error }}</div>
     {% endif %}
 
+    {% if let Some(token) = pending_totp_token %}
+    <form method="post" action="/login/totp">
+      <input type="hidden" name="email" value="{{ email }}">
+      <input type="hidden" name="pending_token" value="{{ token }}">
+      <div class="field">
+        <label for="code">Authenticator code</label>
+        <input id="code" name="code" type="text" required autofocus
+               autocomplete="one-time-code" autocapitalize="off" spellcheck="false"
+               placeholder="6-digit code">
+      </div>
+      <button class="btn primary" type="submit" style="width:100%">Verify</button>
+    </form>
+    {% else %}
     <form method="post" action="/login">
       <div class="field">
         <label for="email">Email</label>
@@ -33,6 +46,7 @@
       </div>
       <button class="btn primary" type="submit" style="width:100%">Sign in</button>
     </form>
+    {% endif %}
 
     <p class="muted mt" style="font-size:.8rem">
       First run? The initial password is printed once in the panel log.

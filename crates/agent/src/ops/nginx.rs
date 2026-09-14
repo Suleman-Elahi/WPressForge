@@ -71,7 +71,9 @@ impl NginxServer {
 
     /// `nginx -t` before every reload: a bad config never reaches production.
     pub async fn test(&self) -> Result<()> {
-        exec::run(self.config.dry_run, "nginx", &["-t"]).await.map(|_| ())
+        exec::run(self.config.dry_run, "nginx", &["-t"])
+            .await
+            .map(|_| ())
     }
 
     pub async fn reload(&self) -> Result<()> {
@@ -474,7 +476,14 @@ mod tests {
     fn conservative_output_avoids_every_optional_directive() {
         let vhost = render_vhost(&config(), &NginxCapabilities::CONSERVATIVE, &site(), true);
 
-        for forbidden in ["http2 on;", "http3 on;", "brotli", "quic", "reuseport", "fastcgi_cache_purge"] {
+        for forbidden in [
+            "http2 on;",
+            "http3 on;",
+            "brotli",
+            "quic",
+            "reuseport",
+            "fastcgi_cache_purge",
+        ] {
             assert!(
                 !vhost.contains(forbidden),
                 "conservative vhost must not contain `{forbidden}`"
@@ -561,61 +570,64 @@ mod host_validation {
 
         // Both dialects must be accepted: what we render for this host, and the
         // conservative output we render when the probe fails or the host is old.
-        let variants = [("detected", detected), ("conservative", NginxCapabilities::CONSERVATIVE)];
+        let variants = [
+            ("detected", detected),
+            ("conservative", NginxCapabilities::CONSERVATIVE),
+        ];
 
         for (label, caps) in variants {
-        for ssl in [false, true] {
-            let prefix = prepare_prefix(label, ssl).expect("prepare test prefix");
-            let site = super::tests::site();
-            let config = config_rooted_at(&prefix);
+            for ssl in [false, true] {
+                let prefix = prepare_prefix(label, ssl).expect("prepare test prefix");
+                let site = super::tests::site();
+                let config = config_rooted_at(&prefix);
 
-            let vhost = render_vhost(&config, &caps, &site, ssl)
-                // The certificate lives in /etc/letsencrypt on a real host; use
-                // the throwaway self-signed pair here.
-                .replace(
-                    "/etc/letsencrypt/live/example.com/fullchain.pem",
-                    &prefix.join("test.crt").display().to_string(),
-                )
-                .replace(
-                    "/etc/letsencrypt/live/example.com/privkey.pem",
-                    &prefix.join("test.key").display().to_string(),
+                let vhost = render_vhost(&config, &caps, &site, ssl)
+                    // The certificate lives in /etc/letsencrypt on a real host; use
+                    // the throwaway self-signed pair here.
+                    .replace(
+                        "/etc/letsencrypt/live/example.com/fullchain.pem",
+                        &prefix.join("test.crt").display().to_string(),
+                    )
+                    .replace(
+                        "/etc/letsencrypt/live/example.com/privkey.pem",
+                        &prefix.join("test.key").display().to_string(),
+                    );
+
+                // `nginx -t` really binds the listeners, so move them to
+                // unprivileged ports. The directive forms under test are unchanged.
+                let vhost = vhost
+                    .replace("listen [::]:443", "listen [::]:18443")
+                    .replace("listen 443", "listen 18443")
+                    .replace("listen [::]:80;", "listen [::]:18080;")
+                    .replace("listen 80;", "listen 18080;");
+
+                std::fs::write(prefix.join("site.conf"), &vhost).unwrap();
+                std::fs::write(prefix.join("cache.conf"), render_cache_zone(&config, &site))
+                    .unwrap();
+                std::fs::write(prefix.join("nginx.conf"), main_config()).unwrap();
+
+                let output = Command::new("nginx")
+                    .args([
+                        "-t",
+                        "-p",
+                        &prefix.display().to_string(),
+                        "-c",
+                        &prefix.join("nginx.conf").display().to_string(),
+                    ])
+                    .output()
+                    .expect("run nginx -t");
+
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                assert!(
+                    output.status.success(),
+                    "nginx rejected the {label} {} config:\n{stderr}\n--- config ---\n{vhost}",
+                    if ssl { "https" } else { "http" }
                 );
-
-            // `nginx -t` really binds the listeners, so move them to
-            // unprivileged ports. The directive forms under test are unchanged.
-            let vhost = vhost
-                .replace("listen [::]:443", "listen [::]:18443")
-                .replace("listen 443", "listen 18443")
-                .replace("listen [::]:80;", "listen [::]:18080;")
-                .replace("listen 80;", "listen 18080;");
-
-            std::fs::write(prefix.join("site.conf"), &vhost).unwrap();
-            std::fs::write(
-                prefix.join("cache.conf"),
-                render_cache_zone(&config, &site),
-            )
-            .unwrap();
-            std::fs::write(prefix.join("nginx.conf"), main_config()).unwrap();
-
-            let output = Command::new("nginx")
-                .args([
-                    "-t",
-                    "-p",
-                    &prefix.display().to_string(),
-                    "-c",
-                    &prefix.join("nginx.conf").display().to_string(),
-                ])
-                .output()
-                .expect("run nginx -t");
-
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            assert!(
-                output.status.success(),
-                "nginx rejected the {label} {} config:\n{stderr}\n--- config ---\n{vhost}",
-                if ssl { "https" } else { "http" }
-            );
-            eprintln!("  ok: {label} {} config", if ssl { "https" } else { "http" });
-        }
+                eprintln!(
+                    "  ok: {label} {} config",
+                    if ssl { "https" } else { "http" }
+                );
+            }
         }
     }
 }
@@ -652,7 +664,10 @@ mod tests_support {
         std::fs::create_dir_all(prefix.join("example.com/tmp"))?;
         std::fs::create_dir_all(prefix.join("cache"))?;
 
-        for candidate in ["/etc/nginx/fastcgi_params", "/usr/local/nginx/conf/fastcgi_params"] {
+        for candidate in [
+            "/etc/nginx/fastcgi_params",
+            "/usr/local/nginx/conf/fastcgi_params",
+        ] {
             if Path::new(candidate).exists() {
                 std::fs::copy(candidate, prefix.join("fastcgi_params"))?;
                 break;
@@ -662,13 +677,25 @@ mod tests_support {
         if ssl {
             let status = std::process::Command::new("openssl")
                 .args([
-                    "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
-                    "-subj", "/CN=example.com",
-                    "-keyout", &prefix.join("test.key").display().to_string(),
-                    "-out", &prefix.join("test.crt").display().to_string(),
+                    "req",
+                    "-x509",
+                    "-newkey",
+                    "rsa:2048",
+                    "-nodes",
+                    "-days",
+                    "1",
+                    "-subj",
+                    "/CN=example.com",
+                    "-keyout",
+                    &prefix.join("test.key").display().to_string(),
+                    "-out",
+                    &prefix.join("test.crt").display().to_string(),
                 ])
                 .output()?;
-            assert!(status.status.success(), "openssl failed to make a test cert");
+            assert!(
+                status.status.success(),
+                "openssl failed to make a test cert"
+            );
         }
 
         Ok(prefix)
@@ -710,6 +737,6 @@ mod tests_support {
            include cache.conf;\n\
            include site.conf;\n\
          }\n"
-            .to_string()
+        .to_string()
     }
 }

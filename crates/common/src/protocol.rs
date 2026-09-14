@@ -5,8 +5,8 @@
 //! [`OperationEnvelope`], response is [`OperationResult`].
 
 use crate::models::{
-    BackupScope, CacheSettings, CronMode, DatabaseMode, PhpVersion, ResourceLimits, RetentionPolicy,
-    ServerMetrics, SiteStatus, WpItemAction,
+    BackupScope, CacheSettings, CronMode, DatabaseMode, PhpVersion, ResourceLimits,
+    RetentionPolicy, ServerMetrics, SiteStatus, WpItemAction,
 };
 use serde::{Deserialize, Serialize};
 
@@ -52,43 +52,93 @@ pub enum Operation {
     // -- node ---------------------------------------------------------------
     Ping,
     GetServerMetrics,
-    GetSiteMetrics { site_ids: Vec<i64> },
+    GetSiteMetrics {
+        site_ids: Vec<i64>,
+    },
 
     // -- site lifecycle -----------------------------------------------------
     CreateSite(CreateSite),
-    DeleteSite { site_id: i64, keep_backups: bool },
-    StartSite { site_id: i64 },
-    StopSite { site_id: i64 },
-    RestartSite { site_id: i64 },
-    GetSiteStatus { site_id: i64 },
+    DeleteSite {
+        site_id: i64,
+        keep_backups: bool,
+    },
+    StartSite {
+        site_id: i64,
+    },
+    StopSite {
+        site_id: i64,
+    },
+    RestartSite {
+        site_id: i64,
+    },
+    GetSiteStatus {
+        site_id: i64,
+    },
     CloneSite(CloneSite),
 
     // -- php ----------------------------------------------------------------
-    SwitchPhp { site_id: i64, version: PhpVersion },
-    SetLimits { site_id: i64, limits: ResourceLimits },
+    SwitchPhp {
+        site_id: i64,
+        version: PhpVersion,
+    },
+    SetLimits {
+        site_id: i64,
+        limits: ResourceLimits,
+    },
 
     // -- domains / ssl ------------------------------------------------------
-    AddDomain { site_id: i64, domain: String },
-    RemoveDomain { site_id: i64, domain: String },
-    IssueCertificate { site_id: i64, domains: Vec<String> },
-    RenewCertificate { site_id: i64 },
+    AddDomain {
+        site_id: i64,
+        domain: String,
+    },
+    RemoveDomain {
+        site_id: i64,
+        domain: String,
+    },
+    IssueCertificate {
+        site_id: i64,
+        domains: Vec<String>,
+    },
+    RenewCertificate {
+        site_id: i64,
+    },
 
     // -- cache --------------------------------------------------------------
-    SetCache { site_id: i64, settings: CacheSettings },
-    ClearCache { site_id: i64 },
+    SetCache {
+        site_id: i64,
+        settings: CacheSettings,
+    },
+    ClearCache {
+        site_id: i64,
+    },
 
     // -- wordpress ----------------------------------------------------------
     /// Runs a whitelisted WP-CLI subcommand inside the site container.
-    WpCli { site_id: i64, args: Vec<String> },
+    WpCli {
+        site_id: i64,
+        args: Vec<String>,
+    },
     InstallWordpress(InstallWordpress),
-    UpdateWordpress { site_id: i64 },
+    UpdateWordpress {
+        site_id: i64,
+    },
 
     // -- wordpress management (M2) ------------------------------------------
-    ListPlugins { site_id: i64 },
-    ListThemes { site_id: i64 },
-    ListWpUsers { site_id: i64 },
-    ListCronEvents { site_id: i64 },
-    CoreCheckUpdate { site_id: i64 },
+    ListPlugins {
+        site_id: i64,
+    },
+    ListThemes {
+        site_id: i64,
+    },
+    ListWpUsers {
+        site_id: i64,
+    },
+    ListCronEvents {
+        site_id: i64,
+    },
+    CoreCheckUpdate {
+        site_id: i64,
+    },
     PluginAction {
         site_id: i64,
         slug: String,
@@ -99,11 +149,25 @@ pub enum Operation {
         slug: String,
         action: WpItemAction,
     },
-    UpdateAllPlugins { site_id: i64 },
-    ResetWpPassword { site_id: i64, user_login: String },
-    RunCronEvent { site_id: i64, hook: String },
-    SetWpCron { site_id: i64, mode: CronMode },
-    PurgeUrls { site_id: i64, urls: Vec<String> },
+    UpdateAllPlugins {
+        site_id: i64,
+    },
+    ResetWpPassword {
+        site_id: i64,
+        user_login: String,
+    },
+    RunCronEvent {
+        site_id: i64,
+        hook: String,
+    },
+    SetWpCron {
+        site_id: i64,
+        mode: CronMode,
+    },
+    PurgeUrls {
+        site_id: i64,
+        urls: Vec<String>,
+    },
 
     // -- backups ------------------------------------------------------------
     CreateBackup {
@@ -122,7 +186,9 @@ pub enum Operation {
         site_id: i64,
         target: ResticTarget,
     },
-    InitBackupRepo { target: ResticTarget },
+    InitBackupRepo {
+        target: ResticTarget,
+    },
 
     // -- logs ---------------------------------------------------------------
     TailLogs {
@@ -130,6 +196,16 @@ pub enum Operation {
         stream: LogStream,
         lines: u32,
         grep: Option<String>,
+    },
+
+    // -- imports (M6) -------------------------------------------------------
+    InspectImportSource {
+        source: ImportSource,
+    },
+    ImportSite {
+        site_id: i64,
+        source: ImportSource,
+        resync: bool,
     },
 }
 
@@ -174,6 +250,8 @@ impl Operation {
             Self::ListBackups { .. } => "list_backups",
             Self::InitBackupRepo { .. } => "init_backup_repo",
             Self::TailLogs { .. } => "tail_logs",
+            Self::InspectImportSource { .. } => "inspect_import_source",
+            Self::ImportSite { .. } => "import_site",
         }
     }
 }
@@ -213,6 +291,32 @@ pub struct CloneSite {
     pub staging: bool,
     pub search_replace: bool,
     pub request_ssl: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportSource {
+    pub host: String,
+    pub port: u16,
+    pub user: String,
+    pub auth: SshAuth,
+    pub remote_path: String,
+    pub db: Option<RemoteDb>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SshAuth {
+    Password(String),
+    PrivateKey(String),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoteDb {
+    pub host: String,
+    pub port: u16,
+    pub name: String,
+    pub user: String,
+    pub password: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -331,6 +435,13 @@ pub enum OperationData {
         password: String,
     },
     SiteMetrics(Vec<crate::models::SiteMetricSample>),
+    ImportInspection {
+        wp_version: String,
+        php_version: String,
+        size_mb: u64,
+        db_name: Option<String>,
+        db_user: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

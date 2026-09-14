@@ -58,7 +58,9 @@ async fn servers(State(state): State<AppState>) -> AppResult<Json<Vec<ServerView
 }
 
 async fn server(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult<Json<ServerView>> {
-    let row = db::servers::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+    let row = db::servers::get(&state.db, id)
+        .await?
+        .ok_or(AppError::NotFound)?;
     Ok(Json(ServerView {
         server: row.server,
         metrics: row.metrics,
@@ -79,7 +81,9 @@ async fn sites(State(state): State<AppState>) -> AppResult<Json<Vec<SiteView>>> 
 }
 
 async fn site(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult<Json<SiteView>> {
-    let row = db::sites::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+    let row = db::sites::get(&state.db, id)
+        .await?
+        .ok_or(AppError::NotFound)?;
     Ok(Json(SiteView {
         site: row.site,
         server_name: row.server_name,
@@ -101,7 +105,9 @@ async fn jobs(State(state): State<AppState>) -> AppResult<Json<Vec<JobView>>> {
 }
 
 async fn job(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult<Json<JobView>> {
-    let row = db::jobs::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+    let row = db::jobs::get(&state.db, id)
+        .await?
+        .ok_or(AppError::NotFound)?;
     let steps = db::jobs::steps(&state.db, id).await?;
     Ok(Json(JobView {
         job: row.job,

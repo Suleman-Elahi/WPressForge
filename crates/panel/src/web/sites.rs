@@ -1,17 +1,17 @@
-use super::{redirect_with_flash, render, Chrome};
+use super::{Chrome, redirect_with_flash, render};
 use crate::auth::{CurrentSession, CurrentUser};
 use crate::db;
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 use askama::Template;
+use axum::Form;
 use axum::extract::{Path, Query, State};
 use axum::response::{Html, IntoResponse, Response};
-use axum::Form;
 use serde::Deserialize;
 use serde_json::json;
 use wp_common::models::{
-    Backup, CacheSettings, CronEventInfo, CronMode, DatabaseMode, Domain, Environment, JobKind,
-    PhpVersion, PluginInfo, ResourceLimits, ThemeInfo, WpItemAction, WpUserInfo,
+    Backup, CacheSettings, CronEventInfo, DatabaseMode, Domain, Environment, JobKind, PhpVersion,
+    PluginInfo, ResourceLimits, ThemeInfo, WpItemAction, WpUserInfo,
 };
 
 // ---------------------------------------------------------------------------
@@ -36,13 +36,23 @@ struct ListTemplate {
     total: usize,
 }
 
+fn require_operator_or_above(user: &CurrentUser) -> AppResult<()> {
+    if user.0.role == "viewer" {
+        Err(AppError::Forbidden(
+            "Read-only viewer cannot perform actions".into(),
+        ))
+    } else {
+        Ok(())
+    }
+}
+
 pub async fn list(
     State(state): State<AppState>,
     user: CurrentUser,
     session: CurrentSession,
     Query(query): Query<ListQuery>,
 ) -> AppResult<Response> {
-    let all = db::sites::list(&state.db).await?;
+    let all = db::sites::list_for_user(&state.db, user.0.id, &user.0.role).await?;
     let total = all.len();
     let needle = query.q.clone().unwrap_or_default().to_lowercase();
     let status_filter = query.status.clone().unwrap_or_default();
@@ -117,7 +127,9 @@ pub async fn detail(
     Path(id): Path<i64>,
     Query(query): Query<DetailQuery>,
 ) -> AppResult<Response> {
-    let site = db::sites::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+    let site = db::sites::get_for_user(&state.db, id, user.0.id, &user.0.role)
+        .await?
+        .ok_or(AppError::NotFound)?;
     let tab = query
         .tab
         .filter(|t| TABS.iter().any(|(key, _)| key == t))
@@ -163,6 +175,7 @@ pub async fn new_form(
     session: CurrentSession,
     Query(query): Query<super::FlashQuery>,
 ) -> AppResult<Response> {
+    require_operator_or_above(&user)?;
     let servers = db::servers::list(&state.db).await?;
     Ok(render(NewTemplate {
         chrome: Chrome::new(&state, &user, &session, "sites", "New site", query.flash).await,
@@ -226,9 +239,12 @@ pub async fn create(
     user: CurrentUser,
     Form(form): Form<NewSiteForm>,
 ) -> AppResult<Response> {
+    require_operator_or_above(&user)?;
     let domain = form.domain.trim().trim_start_matches("www.").to_lowercase();
     if !valid_domain(&domain) {
-        return Err(AppError::BadRequest(format!("`{domain}` is not a valid domain")));
+        return Err(AppError::BadRequest(format!(
+            "`{domain}` is not a valid domain"
+        )));
     }
     if db::sites::domain_exists(&state.db, &domain).await? {
         return Err(AppError::BadRequest(format!("{domain} already exists")));
@@ -270,6 +286,10 @@ pub async fn create(
         },
     )
     .await?;
+
+    if !db::teams::has_global_access(&user.0.role) {
+        let _ = db::teams::grant_site_access(&state.db, site_id, user.0.id, "operator").await;
+    }
 
     let job_id = db::jobs::enqueue(
         &state.db,
@@ -316,7 +336,10 @@ pub async fn action(
     user: CurrentUser,
     Path((id, action)): Path<(i64, String)>,
 ) -> AppResult<Response> {
-    let site = db::sites::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+    require_operator_or_above(&user)?;
+    let site = db::sites::get_for_user(&state.db, id, user.0.id, &user.0.role)
+        .await?
+        .ok_or(AppError::NotFound)?;
 
     let (kind, flash) = match action.as_str() {
         "start" => (JobKind::SiteStart, "Starting site"),
@@ -380,7 +403,10 @@ pub async fn restore_backup(
     Path((id, snapshot_id)): Path<(i64, String)>,
     Form(form): Form<RestoreForm>,
 ) -> AppResult<Response> {
-    let site = db::sites::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+    require_operator_or_above(&user)?;
+    let site = db::sites::get_for_user(&state.db, id, user.0.id, &user.0.role)
+        .await?
+        .ok_or(AppError::NotFound)?;
 
     let scope: wp_common::models::BackupScope = match form.scope.as_str() {
         "full" => wp_common::models::BackupScope::Full,
@@ -410,32 +436,46 @@ pub async fn restore_backup(
     )
     .await?;
 
-    Ok(redirect_with_flash(&format!("/jobs/{job_id}"), "Restore queued"))
+    Ok(redirect_with_flash(
+        &format!("/jobs/{job_id}"),
+        "Restore queued",
+    ))
 }
 
 /// Sync backups from the agent's restic repository.
 pub async fn sync_backups(
     State(state): State<AppState>,
-    user: CurrentUser,
+    _user: CurrentUser,
     Path(id): Path<i64>,
 ) -> AppResult<Response> {
-    let site = db::sites::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+    let site = db::sites::get_for_user(&state.db, id, _user.0.id, &_user.0.role)
+        .await?
+        .ok_or(AppError::NotFound)?;
     let server = db::servers::get(&state.db, site.site.server_id)
         .await?
         .ok_or(AppError::NotFound)?;
 
     // For now, just trigger a list and record the result.
     // A full implementation would decrypt the destination and pass a ResticTarget.
-    let _ = state.agent.query(&server.connection(), wp_common::protocol::Operation::ListBackups {
-        site_id: id,
-        target: wp_common::protocol::ResticTarget {
-            repo: String::new(),
-            password: String::new(),
-            env: Vec::new(),
-        },
-    }).await;
+    let _ = state
+        .agent
+        .query(
+            &server.connection(),
+            wp_common::protocol::Operation::ListBackups {
+                site_id: id,
+                target: wp_common::protocol::ResticTarget {
+                    repo: String::new(),
+                    password: String::new(),
+                    env: Vec::new(),
+                },
+            },
+        )
+        .await;
 
-    Ok(redirect_with_flash(&format!("/sites/{id}"), "Synced backups from node"))
+    Ok(redirect_with_flash(
+        &format!("/sites/{id}"),
+        "Synced backups from node",
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -462,7 +502,10 @@ pub async fn clone_form(
     session: CurrentSession,
     Path(id): Path<i64>,
 ) -> AppResult<Response> {
-    let site = db::sites::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+    require_operator_or_above(&user)?;
+    let site = db::sites::get_for_user(&state.db, id, user.0.id, &user.0.role)
+        .await?
+        .ok_or(AppError::NotFound)?;
     let chrome = Chrome::new(&state, &user, &session, "sites", "Clone Site", None).await;
     Ok(render(ClonePage { chrome, site }))
 }
@@ -475,14 +518,19 @@ pub async fn clone_create(
     Path(id): Path<i64>,
     Form(form): Form<CloneForm>,
 ) -> AppResult<Response> {
-    let source = db::sites::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+    require_operator_or_above(&user)?;
+    let source = db::sites::get_for_user(&state.db, id, user.0.id, &user.0.role)
+        .await?
+        .ok_or(AppError::NotFound)?;
 
     // Validate target domain.
     if form.target_domain.is_empty() {
         return Err(AppError::BadRequest("target domain is required".into()));
     }
     if form.target_domain == source.site.domain {
-        return Err(AppError::BadRequest("target domain cannot be the same as source".into()));
+        return Err(AppError::BadRequest(
+            "target domain cannot be the same as source".into(),
+        ));
     }
     if db::sites::domain_exists(&state.db, &form.target_domain).await? {
         return Err(AppError::BadRequest("domain already exists".into()));
@@ -494,7 +542,10 @@ pub async fn clone_create(
         db::sites::NewSite {
             server_id: source.site.server_id,
             domain: &form.target_domain,
-            title: Some(&format!("{} (clone)", source.site.title.as_deref().unwrap_or(&source.site.domain))),
+            title: Some(&format!(
+                "{} (clone)",
+                source.site.title.as_deref().unwrap_or(&source.site.domain)
+            )),
             php_version: source.site.php_version,
             database_mode: source.site.database_mode,
             environment: source.site.environment,
@@ -505,6 +556,10 @@ pub async fn clone_create(
         },
     )
     .await?;
+
+    if !db::teams::has_global_access(&user.0.role) {
+        let _ = db::teams::grant_site_access(&state.db, target_id, user.0.id, "operator").await;
+    }
 
     let job_id = db::jobs::enqueue(
         &state.db,
@@ -533,7 +588,10 @@ pub async fn clone_create(
     )
     .await?;
 
-    Ok(redirect_with_flash(&format!("/jobs/{job_id}"), "Clone job queued"))
+    Ok(redirect_with_flash(
+        &format!("/jobs/{job_id}"),
+        "Clone job queued",
+    ))
 }
 
 // Staging create and push use the same clone operation with staging=true.
@@ -543,7 +601,10 @@ pub async fn staging_create(
     _session: CurrentSession,
     Path(id): Path<i64>,
 ) -> AppResult<Response> {
-    let source = db::sites::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+    require_operator_or_above(&user)?;
+    let source = db::sites::get_for_user(&state.db, id, user.0.id, &user.0.role)
+        .await?
+        .ok_or(AppError::NotFound)?;
 
     // Generate staging domain.
     let target_domain = format!("staging.{}", source.site.domain);
@@ -557,7 +618,10 @@ pub async fn staging_create(
         db::sites::NewSite {
             server_id: source.site.server_id,
             domain: &target_domain,
-            title: Some(&format!("{} (staging)", source.site.title.as_deref().unwrap_or(&source.site.domain))),
+            title: Some(&format!(
+                "{} (staging)",
+                source.site.title.as_deref().unwrap_or(&source.site.domain)
+            )),
             php_version: source.site.php_version,
             database_mode: source.site.database_mode,
             environment: wp_common::models::Environment::Staging,
@@ -568,6 +632,10 @@ pub async fn staging_create(
         },
     )
     .await?;
+
+    if !db::teams::has_global_access(&user.0.role) {
+        let _ = db::teams::grant_site_access(&state.db, target_id, user.0.id, "operator").await;
+    }
 
     let job_id = db::jobs::enqueue(
         &state.db,
@@ -596,7 +664,10 @@ pub async fn staging_create(
     )
     .await?;
 
-    Ok(redirect_with_flash(&format!("/jobs/{job_id}"), "Staging site creation queued"))
+    Ok(redirect_with_flash(
+        &format!("/jobs/{job_id}"),
+        "Staging site creation queued",
+    ))
 }
 
 pub async fn staging_push(
@@ -605,7 +676,10 @@ pub async fn staging_push(
     _session: CurrentSession,
     Path(id): Path<i64>,
 ) -> AppResult<Response> {
-    let staging_site = db::sites::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+    require_operator_or_above(&user)?;
+    let staging_site = db::sites::get_for_user(&state.db, id, user.0.id, &user.0.role)
+        .await?
+        .ok_or(AppError::NotFound)?;
 
     // Verify this is actually a staging site.
     if staging_site.site.environment != wp_common::models::Environment::Staging {
@@ -613,10 +687,13 @@ pub async fn staging_push(
     }
 
     // Verify it has a parent (production) site.
-    let parent_id = staging_site.site.parent_site_id.ok_or_else(|| {
-        AppError::BadRequest("staging site has no parent production site".into())
-    })?;
-    let parent = db::sites::get(&state.db, parent_id).await?.ok_or(AppError::NotFound)?;
+    let parent_id = staging_site
+        .site
+        .parent_site_id
+        .ok_or_else(|| AppError::BadRequest("staging site has no parent production site".into()))?;
+    let parent = db::sites::get_for_user(&state.db, parent_id, user.0.id, &user.0.role)
+        .await?
+        .ok_or(AppError::NotFound)?;
 
     let job_id = db::jobs::enqueue(
         &state.db,
@@ -645,7 +722,10 @@ pub async fn staging_push(
     )
     .await?;
 
-    Ok(redirect_with_flash(&format!("/jobs/{job_id}"), "Push to production queued"))
+    Ok(redirect_with_flash(
+        &format!("/jobs/{job_id}"),
+        "Push to production queued",
+    ))
 }
 
 #[derive(Debug, Deserialize)]
@@ -659,7 +739,10 @@ pub async fn switch_php(
     Path(id): Path<i64>,
     Form(form): Form<PhpForm>,
 ) -> AppResult<Response> {
-    let site = db::sites::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+    require_operator_or_above(&user)?;
+    let site = db::sites::get_for_user(&state.db, id, user.0.id, &user.0.role)
+        .await?
+        .ok_or(AppError::NotFound)?;
     let version = PhpVersion::parse(&form.php_version)
         .ok_or_else(|| AppError::BadRequest("unsupported PHP version".into()))?;
 
@@ -721,7 +804,10 @@ pub async fn update_cache(
     Path(id): Path<i64>,
     Form(form): Form<CacheForm>,
 ) -> AppResult<Response> {
-    let site = db::sites::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+    require_operator_or_above(&user)?;
+    let site = db::sites::get_for_user(&state.db, id, user.0.id, &user.0.role)
+        .await?
+        .ok_or(AppError::NotFound)?;
     let settings = CacheSettings {
         fastcgi_cache: checked(&form.fastcgi_cache),
         ttl_seconds: form.ttl_seconds.clamp(30, 2_592_000),
@@ -760,7 +846,10 @@ pub async fn update_limits(
     Path(id): Path<i64>,
     Form(form): Form<LimitsForm>,
 ) -> AppResult<Response> {
-    let site = db::sites::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+    require_operator_or_above(&user)?;
+    let site = db::sites::get_for_user(&state.db, id, user.0.id, &user.0.role)
+        .await?
+        .ok_or(AppError::NotFound)?;
     let limits = ResourceLimits {
         cpu_cores: form.cpu_cores.clamp(0.25, 32.0),
         memory_mb: form.memory_mb.clamp(256, 65_536),
@@ -773,7 +862,10 @@ pub async fn update_limits(
         &user.0.email,
         "site.limits",
         &site.site.domain,
-        Some(&format!("{} cpu / {} MB", limits.cpu_cores, limits.memory_mb)),
+        Some(&format!(
+            "{} cpu / {} MB",
+            limits.cpu_cores, limits.memory_mb
+        )),
         true,
     )
     .await?;
@@ -795,10 +887,15 @@ pub async fn add_domain(
     Path(id): Path<i64>,
     Form(form): Form<DomainForm>,
 ) -> AppResult<Response> {
-    let site = db::sites::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+    require_operator_or_above(&user)?;
+    let site = db::sites::get_for_user(&state.db, id, user.0.id, &user.0.role)
+        .await?
+        .ok_or(AppError::NotFound)?;
     let domain = form.domain.trim().to_lowercase();
     if !valid_domain(&domain) {
-        return Err(AppError::BadRequest(format!("`{domain}` is not a valid domain")));
+        return Err(AppError::BadRequest(format!(
+            "`{domain}` is not a valid domain"
+        )));
     }
 
     db::sites::add_domain(&state.db, id, &domain, false).await?;
@@ -824,7 +921,10 @@ pub async fn remove_domain(
     Path(id): Path<i64>,
     Form(form): Form<DomainForm>,
 ) -> AppResult<Response> {
-    let site = db::sites::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+    require_operator_or_above(&user)?;
+    let site = db::sites::get_for_user(&state.db, id, user.0.id, &user.0.role)
+        .await?
+        .ok_or(AppError::NotFound)?;
     let domain = form.domain.trim().to_lowercase();
 
     if domain == site.site.domain {
@@ -863,17 +963,22 @@ struct StatusFragment {
 
 pub async fn status_fragment(
     State(state): State<AppState>,
-    _user: CurrentUser,
+    user: CurrentUser,
     Path(id): Path<i64>,
 ) -> AppResult<Response> {
-    let site = db::sites::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+    let site = db::sites::get_for_user(&state.db, id, user.0.id, &user.0.role)
+        .await?
+        .ok_or(AppError::NotFound)?;
     let active_jobs: Vec<_> = db::jobs::list_for_site(&state.db, id, 5)
         .await?
         .into_iter()
         .filter(|row| !row.job.is_terminal())
         .collect();
 
-    Ok(super::no_store(render(StatusFragment { site, active_jobs })))
+    Ok(super::no_store(render(StatusFragment {
+        site,
+        active_jobs,
+    })))
 }
 
 // ---------------------------------------------------------------------------
@@ -895,14 +1000,19 @@ pub async fn plugins_fragment(
     session: CurrentSession,
     Path(id): Path<i64>,
 ) -> AppResult<Response> {
-    let site = db::sites::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+    let site = db::sites::get_for_user(&state.db, id, user.0.id, &user.0.role)
+        .await?
+        .ok_or(AppError::NotFound)?;
     let server = db::servers::get(&state.db, site.site.server_id)
         .await?
         .ok_or(AppError::NotFound)?;
 
     let result = state
         .agent
-        .query(&server.connection(), wp_common::protocol::Operation::ListPlugins { site_id: id })
+        .query(
+            &server.connection(),
+            wp_common::protocol::Operation::ListPlugins { site_id: id },
+        )
         .await;
     let (plugins, error) = match result {
         Ok(wp_common::protocol::OperationData::Plugins(list)) => (list, None),
@@ -929,7 +1039,10 @@ pub async fn plugin_action(
     Path(id): Path<i64>,
     Form(form): Form<PluginActionForm>,
 ) -> AppResult<Response> {
-    let site = db::sites::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+    require_operator_or_above(&user)?;
+    let site = db::sites::get_for_user(&state.db, id, user.0.id, &user.0.role)
+        .await?
+        .ok_or(AppError::NotFound)?;
     let action = match form.action.as_str() {
         "activate" => WpItemAction::Activate,
         "deactivate" => WpItemAction::Deactivate,
@@ -949,6 +1062,15 @@ pub async fn plugin_action(
     )
     .await?;
     state.notify_jobs();
+    db::audit::record(
+        &state.db,
+        &user.0.email,
+        "plugin.action",
+        &site.site.domain,
+        Some(&format!("job {job_id}: {} {}", action.as_str(), form.slug)),
+        true,
+    )
+    .await?;
 
     Ok(redirect_with_flash(
         &format!("/sites/{id}?tab=wordpress"),
@@ -971,14 +1093,19 @@ pub async fn themes_fragment(
     session: CurrentSession,
     Path(id): Path<i64>,
 ) -> AppResult<Response> {
-    let site = db::sites::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+    let site = db::sites::get_for_user(&state.db, id, user.0.id, &user.0.role)
+        .await?
+        .ok_or(AppError::NotFound)?;
     let server = db::servers::get(&state.db, site.site.server_id)
         .await?
         .ok_or(AppError::NotFound)?;
 
     let result = state
         .agent
-        .query(&server.connection(), wp_common::protocol::Operation::ListThemes { site_id: id })
+        .query(
+            &server.connection(),
+            wp_common::protocol::Operation::ListThemes { site_id: id },
+        )
         .await;
     let (themes, error) = match result {
         Ok(wp_common::protocol::OperationData::Themes(list)) => (list, None),
@@ -1005,7 +1132,10 @@ pub async fn theme_action(
     Path(id): Path<i64>,
     Form(form): Form<ThemeActionForm>,
 ) -> AppResult<Response> {
-    let site = db::sites::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+    require_operator_or_above(&user)?;
+    let site = db::sites::get_for_user(&state.db, id, user.0.id, &user.0.role)
+        .await?
+        .ok_or(AppError::NotFound)?;
     let action = match form.action.as_str() {
         "activate" => WpItemAction::Activate,
         "update" => WpItemAction::Update,
@@ -1024,6 +1154,15 @@ pub async fn theme_action(
     )
     .await?;
     state.notify_jobs();
+    db::audit::record(
+        &state.db,
+        &user.0.email,
+        "theme.action",
+        &site.site.domain,
+        Some(&format!("job {job_id}: {} {}", action.as_str(), form.slug)),
+        true,
+    )
+    .await?;
 
     Ok(redirect_with_flash(
         &format!("/sites/{id}?tab=wordpress"),
@@ -1046,14 +1185,19 @@ pub async fn wpusers_fragment(
     session: CurrentSession,
     Path(id): Path<i64>,
 ) -> AppResult<Response> {
-    let site = db::sites::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+    let site = db::sites::get_for_user(&state.db, id, user.0.id, &user.0.role)
+        .await?
+        .ok_or(AppError::NotFound)?;
     let server = db::servers::get(&state.db, site.site.server_id)
         .await?
         .ok_or(AppError::NotFound)?;
 
     let result = state
         .agent
-        .query(&server.connection(), wp_common::protocol::Operation::ListWpUsers { site_id: id })
+        .query(
+            &server.connection(),
+            wp_common::protocol::Operation::ListWpUsers { site_id: id },
+        )
         .await;
     let (users, error) = match result {
         Ok(wp_common::protocol::OperationData::WpUsers(list)) => (list, None),
@@ -1079,7 +1223,10 @@ pub async fn reset_password(
     Path(id): Path<i64>,
     Form(form): Form<ResetPasswordForm>,
 ) -> AppResult<Response> {
-    let site = db::sites::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+    require_operator_or_above(&user)?;
+    let site = db::sites::get_for_user(&state.db, id, user.0.id, &user.0.role)
+        .await?
+        .ok_or(AppError::NotFound)?;
 
     let job_id = db::jobs::enqueue(
         &state.db,
@@ -1091,6 +1238,15 @@ pub async fn reset_password(
     )
     .await?;
     state.notify_jobs();
+    db::audit::record(
+        &state.db,
+        &user.0.email,
+        "wpuser.reset_password",
+        &site.site.domain,
+        Some(&format!("job {job_id}: {}", form.user_login)),
+        true,
+    )
+    .await?;
 
     Ok(redirect_with_flash(
         &format!("/sites/{id}?tab=wordpress"),
@@ -1113,7 +1269,9 @@ pub async fn cron_fragment(
     session: CurrentSession,
     Path(id): Path<i64>,
 ) -> AppResult<Response> {
-    let site = db::sites::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+    let site = db::sites::get_for_user(&state.db, id, user.0.id, &user.0.role)
+        .await?
+        .ok_or(AppError::NotFound)?;
     let server = db::servers::get(&state.db, site.site.server_id)
         .await?
         .ok_or(AppError::NotFound)?;
@@ -1149,7 +1307,10 @@ pub async fn cron_run(
     Path(id): Path<i64>,
     Form(form): Form<CronRunForm>,
 ) -> AppResult<Response> {
-    let site = db::sites::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+    require_operator_or_above(&user)?;
+    let site = db::sites::get_for_user(&state.db, id, user.0.id, &user.0.role)
+        .await?
+        .ok_or(AppError::NotFound)?;
 
     let job_id = db::jobs::enqueue(
         &state.db,
@@ -1161,6 +1322,15 @@ pub async fn cron_run(
     )
     .await?;
     state.notify_jobs();
+    db::audit::record(
+        &state.db,
+        &user.0.email,
+        "cron.run",
+        &site.site.domain,
+        Some(&format!("job {job_id}: {}", form.hook)),
+        true,
+    )
+    .await?;
 
     Ok(redirect_with_flash(
         &format!("/sites/{id}?tab=wordpress"),
@@ -1184,9 +1354,20 @@ pub async fn console_form(
     Path(id): Path<i64>,
     Query(query): Query<super::FlashQuery>,
 ) -> AppResult<Response> {
-    let site = db::sites::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+    require_operator_or_above(&user)?;
+    let site = db::sites::get_for_user(&state.db, id, user.0.id, &user.0.role)
+        .await?
+        .ok_or(AppError::NotFound)?;
     Ok(render(ConsoleTemplate {
-        chrome: Chrome::new(&state, &user, &session, "sites", "WP-CLI Console", query.flash).await,
+        chrome: Chrome::new(
+            &state,
+            &user,
+            &session,
+            "sites",
+            "WP-CLI Console",
+            query.flash,
+        )
+        .await,
         site,
         output: None,
         error: None,
@@ -1253,7 +1434,10 @@ pub async fn console_submit(
     Path(id): Path<i64>,
     Form(form): Form<ConsoleForm>,
 ) -> AppResult<Response> {
-    let site = db::sites::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+    require_operator_or_above(&user)?;
+    let site = db::sites::get_for_user(&state.db, id, user.0.id, &user.0.role)
+        .await?
+        .ok_or(AppError::NotFound)?;
 
     let args = match tokenize(&form.command) {
         Ok(args) => args,
@@ -1275,10 +1459,7 @@ pub async fn console_submit(
         .agent
         .query(
             &server.connection(),
-            wp_common::protocol::Operation::WpCli {
-                site_id: id,
-                args,
-            },
+            wp_common::protocol::Operation::WpCli { site_id: id, args },
         )
         .await;
 
@@ -1334,11 +1515,13 @@ pub struct LogQuery {
 /// Returns a `<pre class="log">` fragment for HTMX polling.
 pub async fn logs_fragment(
     State(state): State<AppState>,
-    _user: CurrentUser,
+    user: CurrentUser,
     Path(id): Path<i64>,
     Query(query): Query<LogQuery>,
 ) -> AppResult<Response> {
-    let site = db::sites::get(&state.db, id).await?.ok_or(AppError::NotFound)?;
+    let site = db::sites::get_for_user(&state.db, id, user.0.id, &user.0.role)
+        .await?
+        .ok_or(AppError::NotFound)?;
     let server = db::servers::get(&state.db, site.site.server_id)
         .await?
         .ok_or(AppError::NotFound)?;
@@ -1356,15 +1539,18 @@ pub async fn logs_fragment(
     let lines = query.lines.unwrap_or(200).min(2000);
     let grep = query.grep.filter(|g| !g.is_empty() && g.len() <= 64);
 
-    let result = state.agent.query(
-        &server.connection(),
-        wp_common::protocol::Operation::TailLogs {
-            site_id: site.site.id,
-            stream,
-            lines,
-            grep,
-        },
-    ).await;
+    let result = state
+        .agent
+        .query(
+            &server.connection(),
+            wp_common::protocol::Operation::TailLogs {
+                site_id: site.site.id,
+                stream,
+                lines,
+                grep,
+            },
+        )
+        .await;
 
     let content = match result {
         Ok(wp_common::protocol::OperationData::Lines(lines)) => lines.join("\n"),
@@ -1379,4 +1565,178 @@ pub async fn logs_fragment(
         .replace('>', "&gt;");
 
     Ok(Html(format!("<pre class=\"log\">{escaped}</pre>")).into_response())
+}
+
+// ---------------------------------------------------------------------------
+// Backup schedules
+// ---------------------------------------------------------------------------
+
+#[derive(Template)]
+#[template(path = "sites/backup_schedule.html")]
+struct BackupScheduleTemplate {
+    site: db::sites::SiteRow,
+    schedule: Option<db::schedules::Schedule>,
+    destinations: Vec<db::destinations::Destination>,
+    csrf_token: String,
+    selected_dest_id: Option<i64>,
+    scope: String,
+    interval_minutes: i64,
+    enabled: bool,
+}
+
+pub async fn backup_schedule_fragment(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    session: CurrentSession,
+    Path(id): Path<i64>,
+) -> AppResult<Response> {
+    let site = db::sites::get_for_user(&state.db, id, user.0.id, &user.0.role)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    let schedule = db::schedules::for_site(&state.db, id).await?;
+    let destinations = db::destinations::list(&state.db).await?;
+    let csrf_token = state.csrf.token(&session.0);
+
+    let selected_dest_id = schedule.as_ref().and_then(|s| s.destination_id);
+    let scope = schedule
+        .as_ref()
+        .map(|s| s.scope.clone())
+        .unwrap_or_else(|| "full".into());
+    let interval_minutes = schedule
+        .as_ref()
+        .map(|s| s.interval_minutes)
+        .unwrap_or(1440);
+    let enabled = schedule.as_ref().map(|s| s.enabled).unwrap_or(false);
+
+    Ok(super::no_store(render(BackupScheduleTemplate {
+        site,
+        schedule,
+        destinations,
+        csrf_token,
+        selected_dest_id,
+        scope,
+        interval_minutes,
+        enabled,
+    })))
+}
+
+#[derive(Deserialize)]
+pub struct BackupScheduleForm {
+    pub destination_id: i64,
+    pub scope: String,
+    pub interval_minutes: i64,
+    #[serde(default)]
+    pub enabled: Option<String>,
+}
+
+pub async fn upsert_backup_schedule(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<i64>,
+    Form(form): Form<BackupScheduleForm>,
+) -> AppResult<Response> {
+    require_operator_or_above(&user)?;
+    let site = db::sites::get_for_user(&state.db, id, user.0.id, &user.0.role)
+        .await?
+        .ok_or(AppError::NotFound)?;
+
+    let _ = db::destinations::get(&state.db, form.destination_id)
+        .await?
+        .ok_or_else(|| AppError::BadRequest("invalid destination".into()))?;
+
+    db::schedules::upsert(
+        &state.db,
+        db::schedules::ScheduleForm {
+            site_id: id,
+            destination_id: Some(form.destination_id),
+            scope: form.scope,
+            interval_minutes: form.interval_minutes,
+            enabled: form.enabled.is_some(),
+            keep_hourly: 24,
+            keep_daily: 7,
+            keep_weekly: 4,
+            keep_monthly: 6,
+        },
+    )
+    .await?;
+
+    db::audit::record(
+        &state.db,
+        &user.0.email,
+        "backup_schedule.update",
+        &site.site.domain,
+        None,
+        true,
+    )
+    .await?;
+
+    Ok(redirect_with_flash(
+        &format!("/sites/{}?tab=backups", id),
+        "Backup schedule updated",
+    ))
+}
+
+pub async fn delete_backup_schedule(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<i64>,
+) -> AppResult<Response> {
+    require_operator_or_above(&user)?;
+    let site = db::sites::get_for_user(&state.db, id, user.0.id, &user.0.role)
+        .await?
+        .ok_or(AppError::NotFound)?;
+
+    if let Some(schedule) = db::schedules::for_site(&state.db, id).await? {
+        db::schedules::delete(&state.db, schedule.id).await?;
+
+        db::audit::record(
+            &state.db,
+            &user.0.email,
+            "backup_schedule.delete",
+            &site.site.domain,
+            None,
+            true,
+        )
+        .await?;
+    }
+
+    Ok(redirect_with_flash(
+        &format!("/sites/{}?tab=backups", id),
+        "Backup schedule removed",
+    ))
+}
+
+// ---------------------------------------------------------------------------
+// Metrics fragment
+// ---------------------------------------------------------------------------
+
+#[derive(Template)]
+#[template(path = "sites/metrics.html")]
+struct SiteMetricsFragment {
+    cpu_spark: crate::web::servers::Spark,
+    memory_spark: crate::web::servers::Spark,
+    php_busy_spark: crate::web::servers::Spark,
+}
+
+pub async fn metrics_fragment(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<i64>,
+) -> AppResult<Response> {
+    let _site = db::sites::get_for_user(&state.db, id, user.0.id, &user.0.role)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    let history = db::metrics::site_history(&state.db, id, 24)
+        .await
+        .unwrap_or_default();
+
+    let cpu_vals: Vec<f32> = history.iter().map(|r| r.cpu as f32).collect();
+    let mem_vals: Vec<f32> = history.iter().map(|r| r.memory_mb as f32).collect();
+    let php_vals: Vec<f32> = history.iter().map(|r| r.php_busy as f32).collect();
+
+    Ok(super::no_store(render(SiteMetricsFragment {
+        cpu_spark: crate::web::servers::spark_from_values(&cpu_vals),
+        memory_spark: crate::web::servers::spark_from_values(&mem_vals),
+        php_busy_spark: crate::web::servers::spark_from_values(&php_vals),
+    })))
 }

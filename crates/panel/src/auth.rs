@@ -3,11 +3,11 @@
 
 use crate::db::users::{self, User};
 use crate::state::AppState;
-use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use argon2::Argon2;
+use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use axum::body::Body;
 use axum::extract::{Request, State};
-use axum::http::{header, StatusCode};
+use axum::http::{StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Redirect, Response};
 use base64::Engine;
@@ -21,8 +21,8 @@ pub fn hash_password(password: &str) -> anyhow::Result<String> {
     // 16 random bytes, base64 encoded, is the recommended Argon2 salt size.
     let mut salt_bytes = [0u8; 16];
     rand::rng().fill_bytes(&mut salt_bytes);
-    let salt = SaltString::encode_b64(&salt_bytes)
-        .map_err(|e| anyhow::anyhow!("encoding salt: {e}"))?;
+    let salt =
+        SaltString::encode_b64(&salt_bytes).map_err(|e| anyhow::anyhow!("encoding salt: {e}"))?;
     Argon2::default()
         .hash_password(password.as_bytes(), &salt)
         .map(|h| h.to_string())
@@ -64,7 +64,10 @@ pub async fn login(
 ) -> anyhow::Result<Option<LoginOutcome>> {
     let Some(user) = users::by_email(&state.db, email.trim()).await? else {
         // Constant-ish work on unknown accounts to avoid a trivial oracle.
-        let _ = verify_password(password, "$argon2id$v=19$m=19456,t=2,p=1$c2FsdHNhbHQ$0000000000000000000000000000000000000000000");
+        let _ = verify_password(
+            password,
+            "$argon2id$v=19$m=19456,t=2,p=1$c2FsdHNhbHQ$0000000000000000000000000000000000000000000",
+        );
         return Ok(None);
     };
 
@@ -137,7 +140,10 @@ pub async fn require_session(
     let token = cookie_value(&request, COOKIE_NAME);
 
     let user = match token.as_deref() {
-        Some(token) => users::user_for_session(&state.db, token).await.ok().flatten(),
+        Some(token) => users::user_for_session(&state.db, token)
+            .await
+            .ok()
+            .flatten(),
         None => None,
     };
 
@@ -173,7 +179,7 @@ pub async fn require_session(
                         Ok(b) => b,
                         Err(_) => {
                             return (StatusCode::BAD_REQUEST, "invalid request body")
-                                .into_response()
+                                .into_response();
                         }
                     };
 

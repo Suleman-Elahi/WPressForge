@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1>Inspect Import Source</h1>
+    <p>Review the details found on the remote server before proceeding.</p>
+  </div>
+</div>
+
+<form method="post" action="/imports" class="grid two" style="align-items:start">
+  <input type="hidden" name="csrf_token" value="{{ chrome.csrf_token }}">
+  <input type="hidden" name="server_id" value="{{ form.server_id }}">
+  <input type="hidden" name="domain" value="{{ form.domain }}">
+  <input type="hidden" name="ssh_host" value="{{ form.ssh_host }}">
+  <input type="hidden" name="ssh_port" value="{{ form.ssh_port }}">
+  <input type="hidden" name="ssh_user" value="{{ form.ssh_user }}">
+  <input type="hidden" name="ssh_auth" value="{{ form.ssh_auth }}">
+  <input type="hidden" name="ssh_pass" value="{{ form.ssh_pass }}">
+  <input type="hidden" name="ssh_key" value="{{ form.ssh_key }}">
+  <input type="hidden" name="remote_path" value="{{ form.remote_path }}">
+  
+  <section class="card">
+    <div class="card-head"><h2>Detected Details</h2></div>
+    <div class="card-body">
+      <ul class="list">
+        <li><strong>WordPress Version:</strong> {{ wp_version }}</li>
+        <li><strong>PHP Version:</strong> {{ php_version }}</li>
+        <li><strong>Filesystem Size:</strong> {{ size_mb }} MB</li>
+        <li><strong>Database Name:</strong> {% if let Some(n) = db_name %}{{ n }}{% else %}Not found{% endif %}</li>
+        <li><strong>Database User:</strong> {% if let Some(u) = db_user %}{{ u }}{% else %}Not found{% endif %}</li>
+      </ul>
+      <div class="field mt-4">
+        <label for="php_version">Target PHP Version</label>
+        <select id="php_version" name="php_version">
+          <option value="8.1">PHP 8.1</option>
+          <option value="8.2">PHP 8.2</option>
+          <option value="8.3">PHP 8.3</option>
+          <option value="8.4" selected>PHP 8.4</option>
+        </select>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>Database Credentials</h2></div>
+    <div class="card-body">
+      <p class="hint mb-4">Provide the database credentials so we can export it from the source server. These should be valid on the remote host.</p>
+      <div class="field-row">
+        <div class="field">
+          <label for="db_host">Host</label>
+          <input id="db_host" name="db_host" type="text" required value="127.0.0.1">
+        </div>
+        <div class="field">
+          <label for="db_port">Port</label>
+          <input id="db_port" name="db_port" type="number" required value="3306">
+        </div>
+      </div>
+      <div class="field">
+        <label for="db_name">Database Name</label>
+        <input id="db_name" name="db_name" type="text" required value="{% if let Some(n) = db_name %}{{ n }}{% endif %}">
+      </div>
+      <div class="field">
+        <label for="db_user">Database User</label>
+        <input id="db_user" name="db_user" type="text" required value="{% if let Some(u) = db_user %}{{ u }}{% endif %}">
+      </div>
+      <div class="field">
+        <label for="db_pass">Database Password</label>
+        <input id="db_pass" name="db_pass" type="password" required>
+      </div>
+      <div class="btn-row mt-4">
+        <button class="btn primary" type="submit">Start Import</button>
+        <a class="btn ghost" href="/imports/new">Back</a>
+      </div>
+    </div>
+  </section>
+</form>
+
+{% endblock %}

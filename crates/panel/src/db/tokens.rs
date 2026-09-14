@@ -80,10 +80,7 @@ pub async fn revoke(db: &Db, user_id: i64, id: i64) -> sqlx::Result<()> {
 
 /// Look up the user for a presented plaintext token.
 /// On match, updates `last_used_at` (fire-and-forget).
-pub async fn user_for_token(
-    db: &Db,
-    presented: &str,
-) -> sqlx::Result<Option<super::users::User>> {
+pub async fn user_for_token(db: &Db, presented: &str) -> sqlx::Result<Option<super::users::User>> {
     let hash = hash_token(presented);
     let row = sqlx::query(
         "SELECT u.id, u.email, u.password_hash, u.role, u.totp_secret,
