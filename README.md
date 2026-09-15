@@ -61,6 +61,12 @@ the host.
 
 ## Production install
 
+The short version is below; [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md) has the
+full production guide — service accounts, hardened env files, reverse proxy,
+TLS pinning, firewalls, hardening checklist and rollback. If you want the panel
+and the sites on **one** server, read [`docs/SINGLE-HOST.md`](./docs/SINGLE-HOST.md)
+instead.
+
 1. Panel: build with `cargo build --release`, copy `wp-panel`, `templates/` is
    compiled in, `static/` is served from disk. Use
    `deploy/systemd/wp-panel.service` and put it behind Nginx with TLS.
@@ -126,10 +132,11 @@ first run against live Docker, MariaDB and certbot still needs a shakedown, and
 the full import path needs two hosts to prove end to end.
 
 Current state, the defect history behind it, and the remaining items are tracked
-in [`status`](./status); the engineering plan and conventions are in
-[`docs/IMPLEMENTATION-PLAN.md`](./docs/IMPLEMENTATION-PLAN.md), with operational
-runbooks in [`docs/OPERATIONS.md`](./docs/OPERATIONS.md) and the wire protocol in
-[`docs/PROTOCOL.md`](./docs/PROTOCOL.md).
+in [`status`](./status); a step-by-step production deployment guide is in
+[`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md), the engineering plan and
+conventions are in [`docs/IMPLEMENTATION-PLAN.md`](./docs/IMPLEMENTATION-PLAN.md),
+with operational runbooks in [`docs/OPERATIONS.md`](./docs/OPERATIONS.md) and the
+wire protocol in [`docs/PROTOCOL.md`](./docs/PROTOCOL.md).
 
 ## License
 
