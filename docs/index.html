@@ -1,0 +1,916 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>WPressForge — open-source WordPress server management panel</title>
+<meta name="description" content="WPressForge is a self-hosted, open-source alternative to RunCloud, GridPane and EasyEngine. Manage WordPress across your own Linux servers: provisioning, TLS, backups, staging and teams from one control plane.">
+<style>
+  /* ------------------------------------------------------------------ tokens */
+  :root {
+    --bg:            #080b10;
+    --bg-soft:       #0d1219;
+    --panel:         #111925;
+    --panel-2:       #0f1620;
+    --line:          #1e2a3a;
+    --line-soft:     #172232;
+    --text:          #e7eef7;
+    --text-dim:      #9aabc0;
+    --text-faint:    #67788e;
+    --accent:        #34d399;
+    --accent-2:      #38bdf8;
+    --accent-soft:   rgba(52, 211, 153, .12);
+    --warn:          #fbbf24;
+    --radius:        16px;
+    --radius-sm:     10px;
+    --wrap:          1120px;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Inter, "Helvetica Neue", Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg:          #ffffff;
+      --bg-soft:     #f6f8fb;
+      --panel:       #ffffff;
+      --panel-2:     #f8fafc;
+      --line:        #dde5ee;
+      --line-soft:   #e8eef5;
+      --text:        #0f1b28;
+      --text-dim:    #4c5d70;
+      --text-faint:  #74889d;
+      --accent:      #059669;
+      --accent-2:    #0284c7;
+      --accent-soft: rgba(5, 150, 105, .09);
+      --warn:        #b45309;
+    }
+  }
+
+  /* ------------------------------------------------------------------ base */
+  *, *::before, *::after { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    overflow-x: hidden;
+  }
+  /* Ambient glow behind the hero */
+  body::before {
+    content: "";
+    position: absolute;
+    inset: -20% 0 auto 0;
+    height: 720px;
+    background:
+      radial-gradient(680px 340px at 22% -6%, rgba(52, 211, 153, .18), transparent 70%),
+      radial-gradient(620px 320px at 78% -2%, rgba(56, 189, 248, .16), transparent 70%);
+    pointer-events: none;
+    z-index: 0;
+  }
+  @media (prefers-color-scheme: light) {
+    body::before {
+      background:
+        radial-gradient(680px 340px at 22% -6%, rgba(5, 150, 105, .10), transparent 70%),
+        radial-gradient(620px 320px at 78% -2%, rgba(2, 132, 199, .09), transparent 70%);
+    }
+  }
+  .wrap { width: 100%; max-width: var(--wrap); margin: 0 auto; padding: 0 24px; position: relative; z-index: 1; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; text-underline-offset: 3px; }
+  :focus-visible { outline: 2px solid var(--accent-2); outline-offset: 3px; border-radius: 6px; }
+  h1, h2, h3 { line-height: 1.2; letter-spacing: -.022em; margin: 0; font-weight: 650; }
+  h1 { font-size: clamp(2.1rem, 5.2vw, 3.4rem); letter-spacing: -.035em; }
+  h2 { font-size: clamp(1.5rem, 3.1vw, 2.05rem); }
+  h3 { font-size: 1.02rem; letter-spacing: -.012em; }
+  p { margin: 0; }
+  code {
+    font-family: var(--mono);
+    font-size: .88em;
+    background: var(--accent-soft);
+    border-radius: 5px;
+    padding: .12em .38em;
+  }
+  section { padding: 84px 0; }
+  section[id] { scroll-margin-top: 84px; }
+  .eyebrow {
+    font-size: .74rem; font-weight: 650; letter-spacing: .13em; text-transform: uppercase;
+    color: var(--text-faint);
+  }
+  .lede { color: var(--text-dim); font-size: 1.08rem; max-width: 62ch; }
+  .section-head { max-width: 64ch; margin-bottom: 44px; display: flex; flex-direction: column; gap: 12px; }
+
+  /* ------------------------------------------------------------------ nav */
+  header.nav {
+    position: sticky; top: 0; z-index: 50;
+    backdrop-filter: blur(14px) saturate(150%);
+    background: color-mix(in srgb, var(--bg) 82%, transparent);
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .nav-inner { display: flex; align-items: center; gap: 28px; height: 66px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 680; letter-spacing: -.02em; color: var(--text); }
+  .brand:hover { text-decoration: none; }
+  .brand svg { display: block; }
+  .nav-links { display: flex; gap: 26px; margin-left: auto; }
+  .nav-links a { color: var(--text-dim); font-size: .9rem; font-weight: 500; }
+  .nav-links a:hover { color: var(--text); text-decoration: none; }
+  @media (max-width: 760px) { .nav-links { display: none; } }
+
+  /* ------------------------------------------------------------------ buttons */
+  .btn {
+    display: inline-flex; align-items: center; gap: 9px;
+    padding: 11px 20px; border-radius: var(--radius-sm);
+    font-size: .92rem; font-weight: 600; border: 1px solid transparent;
+    transition: transform .16s ease, box-shadow .16s ease, background .16s ease;
+  }
+  .btn:hover { text-decoration: none; transform: translateY(-1px); }
+  .btn-primary {
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    color: #04121a;
+    box-shadow: 0 8px 24px -10px rgba(52, 211, 153, .65);
+  }
+  .btn-ghost { border-color: var(--line); color: var(--text); background: var(--panel-2); }
+  .btn-ghost:hover { border-color: var(--text-faint); }
+
+  /* ------------------------------------------------------------------ hero */
+  .hero { padding: 78px 0 30px; position: relative; z-index: 1; }
+  .hero-grid { display: grid; gap: 52px; grid-template-columns: 1fr; align-items: start; }
+  @media (min-width: 980px) { .hero-grid { grid-template-columns: 1.02fr .98fr; gap: 46px; } }
+  .hero-copy { display: flex; flex-direction: column; gap: 22px; }
+  .badge {
+    display: inline-flex; align-items: center; gap: 9px; align-self: flex-start;
+    padding: 6px 13px 6px 9px; border-radius: 999px;
+    border: 1px solid var(--line); background: var(--panel-2);
+    font-size: .78rem; font-weight: 600; color: var(--text-dim); letter-spacing: .01em;
+  }
+  .badge .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+  .hero h1 em { font-style: normal; background: linear-gradient(120deg, var(--accent), var(--accent-2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .cta-row { display: flex; flex-wrap: wrap; gap: 12px; }
+
+  /* Diagram card */
+  .diagram {
+    border: 1px solid var(--line); border-radius: var(--radius);
+    background: linear-gradient(180deg, var(--panel), var(--panel-2));
+    padding: 22px 18px 14px;
+    box-shadow: 0 30px 70px -40px rgba(0, 0, 0, .8);
+  }
+  .diagram svg { width: 100%; height: auto; display: block; }
+  .diagram figcaption {
+    margin-top: 14px; padding-top: 13px; border-top: 1px solid var(--line-soft);
+    font-size: .78rem; color: var(--text-faint); text-align: center;
+  }
+  .svg-label { font-family: var(--sans); font-size: 17px; font-weight: 650; fill: var(--text); letter-spacing: -.01em; }
+  .svg-sub   { font-family: var(--sans); font-size: 11.5px; font-weight: 500; fill: var(--text-dim); }
+  .svg-tiny  { font-family: var(--mono); font-size: 10.5px; fill: var(--text-faint); letter-spacing: .02em; }
+  .svg-box   { fill: var(--panel-2); stroke: var(--line); }
+  .svg-card  { fill: var(--panel); stroke: var(--line); }
+  .svg-line  { stroke: var(--line); fill: none; }
+  .svg-accent-line { stroke: url(#grad); fill: none; }
+
+  /* ------------------------------------------------------------------ stats */
+  .stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1px; background: var(--line-soft); border: 1px solid var(--line-soft); border-radius: var(--radius); overflow: hidden; }
+  @media (min-width: 760px) { .stats { grid-template-columns: repeat(4, 1fr); } }
+  .stat { background: var(--bg-soft); padding: 24px 22px; }
+  .stat b { display: block; font-size: 1.7rem; font-weight: 680; letter-spacing: -.03em; }
+  .stat span { font-size: .82rem; color: var(--text-dim); }
+
+  /* ------------------------------------------------------------------ cards */
+  .grid { display: grid; gap: 18px; grid-template-columns: 1fr; }
+  @media (min-width: 640px)  { .grid.cols-2 { grid-template-columns: repeat(2, 1fr); } }
+  @media (min-width: 920px)  { .grid.cols-3 { grid-template-columns: repeat(3, 1fr); } }
+  @media (min-width: 920px)  { .grid.cols-4 { grid-template-columns: repeat(4, 1fr); } }
+
+  .card {
+    border: 1px solid var(--line); border-radius: var(--radius);
+    background: var(--panel); padding: 24px;
+    transition: border-color .18s ease, transform .18s ease;
+  }
+  .card:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); transform: translateY(-2px); }
+  .card h3 { margin-bottom: 7px; }
+  .card p { color: var(--text-dim); font-size: .9rem; }
+  .icon {
+    width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center;
+    background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 26%, transparent);
+    color: var(--accent); margin-bottom: 15px;
+  }
+  .icon svg { width: 19px; height: 19px; }
+
+  /* ------------------------------------------------------------------ steps */
+  .steps { display: grid; gap: 16px; grid-template-columns: 1fr; counter-reset: s; }
+  @media (min-width: 700px) { .steps { grid-template-columns: repeat(2, 1fr); } }
+  @media (min-width: 1000px) { .steps { grid-template-columns: repeat(4, 1fr); } }
+  .step { position: relative; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); padding: 22px; }
+  .step::before {
+    counter-increment: s; content: counter(s, decimal-leading-zero);
+    font-family: var(--mono); font-size: .72rem; font-weight: 700; letter-spacing: .06em;
+    color: var(--accent);
+  }
+  .step h3 { margin: 9px 0 7px; }
+  .step p { color: var(--text-dim); font-size: .88rem; }
+
+  /* ------------------------------------------------------------------ checklist */
+  .checks { list-style: none; padding: 0; margin: 0; display: grid; gap: 11px; grid-template-columns: 1fr; }
+  @media (min-width: 720px) { .checks { grid-template-columns: repeat(2, 1fr); } }
+  .checks li { display: flex; gap: 11px; align-items: flex-start; font-size: .9rem; color: var(--text-dim); }
+  .checks li b { color: var(--text); font-weight: 600; }
+  .checks svg { flex: none; margin-top: 3px; color: var(--accent); }
+
+  .split { display: grid; gap: 40px; grid-template-columns: 1fr; align-items: center; }
+  .split > * { min-width: 0; }
+  @media (min-width: 940px) { .split { grid-template-columns: 1fr 1fr; gap: 52px; } }
+
+  /* ------------------------------------------------------------------ table */
+  .table-wrap { border: 1px solid var(--line); border-radius: var(--radius); overflow-x: auto; background: var(--panel); }
+  table { width: 100%; border-collapse: collapse; min-width: 720px; }
+  th, td { text-align: left; padding: 15px 18px; border-bottom: 1px solid var(--line-soft); vertical-align: top; font-size: .88rem; }
+  thead th { font-size: .76rem; text-transform: uppercase; letter-spacing: .09em; color: var(--text-faint); font-weight: 650; background: var(--panel-2); }
+  tbody tr:last-child td { border-bottom: 0; }
+  td:first-child { color: var(--text); font-weight: 600; }
+  td.mine { background: var(--accent-soft); color: var(--text); }
+  .muted { color: var(--text-dim); }
+  .note { font-size: .8rem; color: var(--text-faint); margin-top: 14px; }
+
+  /* ------------------------------------------------------------------ code */
+  pre {
+    margin: 0; background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 20px 22px; overflow-x: auto; max-width: 100%;
+    font-family: var(--mono); font-size: .84rem; line-height: 1.75;
+    color: var(--text-dim);
+  }
+  pre .c { color: var(--text-faint); }
+  pre .k { color: var(--accent); }
+  pre .s { color: var(--accent-2); }
+
+  /* ------------------------------------------------------------------ chips */
+  .chips { display: flex; flex-wrap: wrap; gap: 9px; padding: 0; margin: 0; list-style: none; }
+  .chips li {
+    font-family: var(--mono); font-size: .78rem; color: var(--text-dim);
+    border: 1px solid var(--line); background: var(--panel-2);
+    padding: 6px 12px; border-radius: 999px;
+  }
+
+  /* ------------------------------------------------------------------ callout */
+  .callout {
+    border: 1px solid var(--line); border-left: 2px solid var(--warn);
+    border-radius: var(--radius-sm); background: var(--panel-2); padding: 22px 24px;
+  }
+  .callout h3 { margin-bottom: 10px; }
+  .callout p, .callout li { color: var(--text-dim); font-size: .89rem; }
+  .callout ul { margin: 12px 0 0; padding-left: 20px; display: grid; gap: 7px; }
+
+  /* ------------------------------------------------------------------ footer */
+  footer { border-top: 1px solid var(--line-soft); padding: 46px 0 60px; margin-top: 20px; background: var(--bg-soft); }
+  .foot-inner { display: flex; flex-wrap: wrap; gap: 22px; align-items: center; justify-content: space-between; }
+  .foot-links { display: flex; flex-wrap: wrap; gap: 22px; }
+  .foot-links a { color: var(--text-dim); font-size: .87rem; }
+  .foot-links a:hover { color: var(--text); }
+  .fine { font-size: .82rem; color: var(--text-faint); }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+  }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+</style>
+</head>
+<body>
+
+<!-- ============================================================== nav -->
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="brand" href="#top">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <rect x="1.2" y="1.2" width="21.6" height="21.6" rx="6" stroke="url(#bg)" stroke-width="1.5"/>
+        <path d="M7.4 8.2 9.6 15.8 12 10.2l2.4 5.6 2.2-7.6" stroke="url(#bg)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+        <defs>
+          <linearGradient id="bg" x1="1" y1="1" x2="23" y2="23" gradientUnits="userSpaceOnUse">
+            <stop stop-color="#34d399"/><stop offset="1" stop-color="#38bdf8"/>
+          </linearGradient>
+        </defs>
+      </svg>
+      WPressForge
+    </a>
+    <nav class="nav-links" aria-label="Sections">
+      <a href="#how">How it works</a>
+      <a href="#features">Features</a>
+      <a href="#isolation">Isolation</a>
+      <a href="#compare">Comparison</a>
+      <a href="#start">Get started</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+
+<!-- ============================================================== hero -->
+<section class="hero">
+  <div class="wrap hero-grid">
+    <div class="hero-copy">
+      <span class="badge"><span class="dot"></span> AGPL-3.0 · Self-hosted · Rust</span>
+      <h1>The open-source WordPress manager for <em>your own servers</em>.</h1>
+      <p class="lede">
+        WPressForge is a self-hosted alternative to RunCloud, GridPane and EasyEngine.
+        A small Rust control plane drives a privileged agent on each node, which provisions
+        Docker, Nginx, MariaDB, TLS, backups and WP-CLI for you — with no per-site licence
+        and no vendor holding your credentials.
+      </p>
+      <div class="cta-row">
+        <a class="btn btn-primary" href="#start">Get started</a>
+        <a class="btn btn-ghost" href="#features">See what it does</a>
+      </div>
+    </div>
+
+    <figure class="diagram" style="margin:0">
+      <svg viewBox="0 0 620 400" role="img" aria-labelledby="diagTitle diagDesc">
+        <title id="diagTitle">WPressForge architecture</title>
+        <desc id="diagDesc">A browser speaks HTTPS to wp-panel, which sends typed operations over an authenticated, certificate-pinned API to a wp-agent running as root on each node. Each agent manages one isolated PHP-FPM container per site.</desc>
+        <defs>
+          <linearGradient id="grad" x1="0" y1="0" x2="1" y2="1">
+            <stop stop-color="#34d399"/><stop offset="1" stop-color="#38bdf8"/>
+          </linearGradient>
+          <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+            <path d="M0 0 10 5 0 10z" fill="var(--text-faint)"/>
+          </marker>
+        </defs>
+
+        <!-- browser -->
+        <rect class="svg-box" x="8" y="152" width="118" height="92" rx="13"/>
+        <line class="svg-line" x1="8" y1="176" x2="126" y2="176"/>
+        <circle cx="23" cy="164" r="2.6" fill="var(--text-faint)"/>
+        <circle cx="34" cy="164" r="2.6" fill="var(--text-faint)"/>
+        <text class="svg-label" x="67" y="205" text-anchor="middle">Browser</text>
+        <text class="svg-sub"   x="67" y="225" text-anchor="middle">HTML · HTMX</text>
+
+        <!-- browser -> panel -->
+        <line class="svg-line" x1="132" y1="198" x2="160" y2="198" marker-end="url(#arrow)"/>
+        <text class="svg-sub" x="146" y="186" text-anchor="middle">HTTPS</text>
+
+        <!-- panel -->
+        <rect class="svg-card" x="168" y="104" width="168" height="192" rx="16" stroke="url(#grad)"/>
+        <text class="svg-tiny"  x="252" y="130" text-anchor="middle">WPressForge</text>
+        <text class="svg-label" x="252" y="156" text-anchor="middle">wp-panel</text>
+        <text class="svg-sub"   x="252" y="178" text-anchor="middle">control plane · Rust</text>
+        <line class="svg-line" x1="190" y1="196" x2="314" y2="196"/>
+        <text class="svg-sub"   x="252" y="218" text-anchor="middle">auth · 2FA · RBAC</text>
+        <text class="svg-sub"   x="252" y="237" text-anchor="middle">no root, no shell</text>
+        <text class="svg-tiny"  x="252" y="262" text-anchor="middle">typed operations only</text>
+
+        <!-- panel -> agent -->
+        <line class="svg-accent-line" x1="340" y1="192" x2="394" y2="192" stroke-width="1.6" marker-end="url(#arrow)"/>
+        <text class="svg-tiny" x="367" y="146" text-anchor="middle">token</text>
+        <text class="svg-tiny" x="367" y="160" text-anchor="middle">+ pin</text>
+
+        <!-- agent -->
+        <rect class="svg-card" x="400" y="80" width="164" height="112" rx="14"/>
+        <text class="svg-label" x="424" y="120">wp-agent</text>
+        <text class="svg-sub"   x="424" y="144">root on the node</text>
+        <text class="svg-sub"   x="424" y="163">Docker · Nginx · DB</text>
+
+        <!-- agent -> containers -->
+        <line class="svg-line" x1="482" y1="196" x2="482" y2="216" marker-end="url(#arrow)"/>
+
+        <!-- containers -->
+        <rect class="svg-box" x="400" y="222" width="164" height="34" rx="9"/>
+        <text class="svg-tiny" x="482" y="243" text-anchor="middle">PHP-FPM · site-a</text>
+        <rect class="svg-box" x="400" y="264" width="164" height="34" rx="9"/>
+        <text class="svg-tiny" x="482" y="285" text-anchor="middle">PHP-FPM · site-b</text>
+        <rect class="svg-box" x="400" y="306" width="164" height="34" rx="9"/>
+        <text class="svg-tiny" x="482" y="327" text-anchor="middle">PHP-FPM · site-c</text>
+
+        <text class="svg-tiny" x="612" y="380" text-anchor="end">one agent per node · one container per site</text>
+      </svg>
+      <figcaption>The panel holds no privileges. The agent owns every implementation.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- ============================================================== stats -->
+<section style="padding-top:26px">
+  <div class="wrap">
+    <div class="stats">
+      <div class="stat"><b>97</b><span>tests across unit, repository, HTTP and real <code>nginx -t</code> layers</span></div>
+      <div class="stat"><b>0</b><span>clippy warnings, with no suppressions anywhere in the workspace</span></div>
+      <div class="stat"><b>1</b><span>static binary for the panel; templates compiled in</span></div>
+      <div class="stat"><b>~10 KB</b><span>of CSS served, plus one small JS file and vendored HTMX</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================== how -->
+<section id="how">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="eyebrow">How it works</span>
+      <h2>Two roles, one contract, no shell strings</h2>
+      <p class="lede">
+        The panel never logs into your servers. It describes <em>what</em> should happen as a
+        typed operation; the agent decides <em>how</em>, on the node where it actually runs.
+      </p>
+    </div>
+
+    <div class="steps">
+      <div class="step">
+        <h3>Everything is a job</h3>
+        <p>Site creation, PHP switches, backups and certificate issuance are rows in a
+          <code>jobs</code> table. Workers execute them and report each step back live.
+          Interrupted jobs are marked failed on restart instead of silently vanishing.</p>
+      </div>
+      <div class="step">
+        <h3>The panel has no privileges</h3>
+        <p>It never runs a shell command on a node, and it holds no root. Compromising the UI
+          does not hand over your fleet; the agent validates every request independently.</p>
+      </div>
+      <div class="step">
+        <h3>The agent builds argument vectors</h3>
+        <p>Operations are defined in a shared protocol crate. The agent assembles <code>argv</code>
+          arrays — never shell strings — and whitelists the WP-CLI subcommands it will run.</p>
+      </div>
+      <div class="step">
+        <h3>Agents are pinned, not trusted</h3>
+        <p>Each node is reached over TLS with its certificate fingerprint pinned, plus a bearer
+          token. The panel refuses an unpinned HTTPS agent, and refuses plain HTTP off loopback.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================== features -->
+<section id="features" style="background:var(--bg-soft); border-top:1px solid var(--line-soft); border-bottom:1px solid var(--line-soft);">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="eyebrow">Feature set</span>
+      <h2>What you actually get</h2>
+      <p class="lede">The day-to-day work of running WordPress — provisioning, updates, backups,
+        staging and access — without a proprietary panel in the middle.</p>
+    </div>
+
+    <div class="grid cols-3">
+
+      <article class="card">
+        <div class="icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="4"/><path d="M3 9h18M9 21V9"/>
+          </svg>
+        </div>
+        <h3>Multi-server sites</h3>
+        <p>Sites, domains, caches and resource limits per site, with every node under one
+          dashboard. Add a node and it becomes a deployment target immediately.</p>
+      </article>
+
+      <article class="card">
+        <div class="icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 3v6M12 21v-3M4.9 4.9l4.2 4.2M19.1 4.9l-4.2 4.2"/>
+            <circle cx="12" cy="13.5" r="3.5"/><path d="M4 20.5h16"/>
+          </svg>
+        </div>
+        <h3>Zero-downtime PHP switches</h3>
+        <p>New container up, health-checked, Nginx upstream moved, traffic verified, then the old
+          container removed. Per-site PHP 8.2 / 8.3 / 8.4.</p>
+      </article>
+
+      <article class="card">
+        <div class="icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 3 4 6.5v5c0 4.4 3.3 8.3 8 9.5 4.7-1.2 8-5.1 8-9.5v-5L12 3Z"/>
+            <path d="m9 12 2 2 4-4"/>
+          </svg>
+        </div>
+        <h3>Per-site isolation</h3>
+        <p>Dedicated Linux UID, one PHP-FPM container with CPU, memory and PID limits,
+          <code>cap-drop ALL</code>, read-only rootfs, and a private or dedicated database.</p>
+      </article>
+
+      <article class="card">
+        <div class="icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <ellipse cx="12" cy="6" rx="8" ry="3.2"/><path d="M4 6v6c0 1.8 3.6 3.2 8 3.2s8-1.4 8-3.2V6"/>
+            <path d="M4 12v6c0 1.8 3.6 3.2 8 3.2s8-1.4 8-3.2v-6"/>
+          </svg>
+        </div>
+        <h3>Encrypted, scheduled backups</h3>
+        <p>Restic snapshots straight from the node to any S3-compatible store — AWS, R2, B2,
+          Wasabi, MinIO — with retention policies and one-click restore.</p>
+      </article>
+
+      <article class="card">
+        <div class="icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="12" r="2.5"/>
+            <path d="M8.5 6H13a3 3 0 0 1 3 3v.5M8.5 18H13a3 3 0 0 0 3-3v-.5"/>
+          </svg>
+        </div>
+        <h3>Clone, staging and push</h3>
+        <p>Spin up <code>staging.example.com</code> from production, work on it, then push back —
+          which takes a safety backup first and is refused if it would hit the wrong target.</p>
+      </article>
+
+      <article class="card">
+        <div class="icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 5h16M4 12h10M4 19h7"/><circle cx="18" cy="18" r="3"/><path d="m20.5 20.5 2 2"/>
+          </svg>
+        </div>
+        <h3>WordPress management</h3>
+        <p>Plugins, themes, users and cron jobs, plus a constrained WP-CLI console that
+          whitelists subcommands instead of handing over a shell.</p>
+      </article>
+
+      <article class="card">
+        <div class="icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 20V9M9 20V4M15 20v-7M21 20v-4"/>
+          </svg>
+        </div>
+        <h3>Metrics, logs and alerting</h3>
+        <p>CPU, memory and disk history with inline sparklines, per-site log viewing, and
+          threshold alerts delivered in-app or by SMTP.</p>
+      </article>
+
+      <article class="card">
+        <div class="icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 3v12"/><path d="m7.5 10.5 4.5 4.5 4.5-4.5"/><path d="M4 19h16"/>
+          </svg>
+        </div>
+        <h3>Import existing sites</h3>
+        <p>Point it at a server over SSH and it inspects, then migrates, an existing WordPress
+          install — searching and replacing the old URL as it goes.</p>
+      </article>
+
+      <article class="card">
+        <div class="icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="9" cy="8" r="3.2"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/>
+            <path d="M17 5.5a3 3 0 0 1 0 5.8M18.5 20c0-2-.7-3.9-1.9-5.3"/>
+          </svg>
+        </div>
+        <h3>Teams and roles</h3>
+        <p>Invitations, roles and per-site grants, so a client can reach exactly one site and a
+          viewer cannot mutate anything.</p>
+      </article>
+
+      <article class="card">
+        <div class="icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="4" y="10" width="16" height="10" rx="3"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>
+            <path d="M12 14v2.5"/>
+          </svg>
+        </div>
+        <h3>Security foundations</h3>
+        <p>CSRF protection, TLS-pinned agents, API tokens, login throttling and TOTP two-factor
+          authentication — on by default, not a paid tier.</p>
+      </article>
+
+      <article class="card">
+        <div class="icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="m8 7-5 5 5 5M16 7l5 5-5 5M13.5 5l-3 14"/>
+          </svg>
+        </div>
+        <h3>JSON API</h3>
+        <p>An authenticated <code>/api/v1</code> scoped to the caller's own sites and servers,
+          for automation and pipelines.</p>
+      </article>
+
+      <article class="card">
+        <div class="icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2.5" y="4" width="19" height="15" rx="3"/><path d="m7 10 2 2-2 2M12 14h5"/>
+          </svg>
+        </div>
+        <h3>Adapts to the host</h3>
+        <p>The agent probes <code>nginx -V</code> at startup and renders only directives the installed
+          binary understands — <code>http2 on;</code> vs the <code>listen</code> parameter, HTTP/3 only
+          where compiled in, brotli otherwise <code>gzip_static</code>.</p>
+      </article>
+
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================== isolation -->
+<section id="isolation">
+  <div class="wrap split">
+    <div class="section-head" style="margin-bottom:0">
+      <span class="eyebrow">Isolation</span>
+      <h2>One site cannot touch another</h2>
+      <p class="lede">
+        Each site gets its own Linux identity and its own container. The container is limited,
+        stripped of capabilities and has a read-only root filesystem — with only that site's
+        directories bind-mounted in.
+      </p>
+      <ul class="checks" style="margin-top:8px">
+        <li>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 12 5.5 5.5L20 6.5"/></svg>
+          <span><b>Dedicated UID</b> per site, allocated above <code>10001</code></span>
+        </li>
+        <li>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 12 5.5 5.5L20 6.5"/></svg>
+          <span><b>CPU, memory and PID caps</b> enforced per container</span>
+        </li>
+        <li>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 12 5.5 5.5L20 6.5"/></svg>
+          <span><b><code>cap-drop ALL</code></b> and <code>no-new-privileges</code></span>
+        </li>
+        <li>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 12 5.5 5.5L20 6.5"/></svg>
+          <span><b>Read-only rootfs</b> with a small <code>noexec</code> tmpfs</span>
+        </li>
+        <li>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 12 5.5 5.5L20 6.5"/></svg>
+          <span><b>Private schema</b> or a dedicated MariaDB container</span>
+        </li>
+        <li>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 12 5.5 5.5L20 6.5"/></svg>
+          <span><b>Redacted logs</b> — passwords never reach the journal</span>
+        </li>
+      </ul>
+    </div>
+
+    <figure class="diagram" style="margin:0">
+      <svg viewBox="0 0 520 400" role="img" aria-labelledby="isoTitle isoDesc">
+        <title id="isoTitle">Per-site container isolation</title>
+        <desc id="isoDesc">A site's files are owned by a dedicated UID and mounted read-write into a single constrained container, alongside a separate database and TLS certificate.</desc>
+        <defs>
+          <linearGradient id="grad2" x1="0" y1="0" x2="1" y2="1">
+            <stop stop-color="#34d399"/><stop offset="1" stop-color="#38bdf8"/>
+          </linearGradient>
+        </defs>
+
+        <!-- host -->
+        <rect class="svg-box" x="14" y="14" width="492" height="372" rx="18" stroke-dasharray="5 5"/>
+        <text class="svg-tiny" x="34" y="42">NODE (root)</text>
+
+        <!-- site dir -->
+        <rect class="svg-card" x="44" y="66" width="196" height="104" rx="13"/>
+        <text class="svg-label" x="62" y="94">/var/www/&lt;domain&gt;</text>
+        <text class="svg-sub"   x="62" y="114">owner uid 10001</text>
+        <rect class="svg-box" x="62" y="126" width="80" height="26" rx="7"/>
+        <text class="svg-tiny" x="102" y="143" text-anchor="middle">public_html</text>
+        <rect class="svg-box" x="150" y="126" width="82" height="26" rx="7"/>
+        <text class="svg-tiny" x="191" y="143" text-anchor="middle">logs</text>
+
+        <!-- container -->
+        <rect class="svg-card" x="272" y="66" width="214" height="104" rx="14" stroke="url(#grad2)"/>
+        <text class="svg-label" x="290" y="94">PHP-FPM container</text>
+        <text class="svg-sub"   x="290" y="114">read-only rootfs</text>
+        <text class="svg-sub"   x="290" y="132">cap-drop ALL · no-new-privs</text>
+        <text class="svg-sub"   x="290" y="150">cpu · mem · pids limited</text>
+
+        <!-- bind mount -->
+        <line class="svg-accent-line" x1="244" y1="118" x2="266" y2="118" stroke-width="1.6" marker-end="url(#arrow)"/>
+
+        <!-- db -->
+        <rect class="svg-card" x="44" y="206" width="196" height="76" rx="13"/>
+        <text class="svg-label" x="62" y="234">Database</text>
+        <text class="svg-sub"   x="62" y="254">private schema, or</text>
+        <text class="svg-sub"   x="62" y="272">its own container</text>
+
+        <!-- tls -->
+        <rect class="svg-card" x="272" y="206" width="214" height="76" rx="13"/>
+        <text class="svg-label" x="290" y="234">TLS certificate</text>
+        <text class="svg-sub"   x="290" y="254">Let's Encrypt, auto-renewed</text>
+        <text class="svg-sub"   x="290" y="272">HTTP-01 webroot challenge</text>
+
+        <!-- nginx -->
+        <rect class="svg-card" x="44" y="304" width="442" height="58" rx="13"/>
+        <text class="svg-label" x="62" y="330">Nginx vhost</text>
+        <text class="svg-sub"   x="62" y="349">FastCGI cache · rate limiting · connection limits</text>
+
+        <line class="svg-line" x1="142" y1="206" x2="142" y2="304" stroke-dasharray="4 4"/>
+        <line class="svg-line" x1="379" y1="206" x2="379" y2="304" stroke-dasharray="4 4"/>
+      </svg>
+      <figcaption>Everything a site needs is declared by the agent, not hand-edited on the box.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- ============================================================== stack -->
+<section id="stack" style="background:var(--bg-soft); border-top:1px solid var(--line-soft); border-bottom:1px solid var(--line-soft); padding:64px 0">
+  <div class="wrap">
+    <div class="section-head" style="margin-bottom:28px">
+      <span class="eyebrow">Under the hood</span>
+      <h2>Nothing exotic underneath</h2>
+      <p class="lede">
+        The panel and agent are Rust. Everything it orchestrates is software your team already
+        knows how to reason about, inspect and repair by hand.
+      </p>
+    </div>
+    <ul class="chips">
+      <li>Rust</li><li>Axum</li><li>Askama</li><li>HTMX</li><li>SQLite (WAL)</li>
+      <li>Docker</li><li>Nginx</li><li>MariaDB</li><li>PHP-FPM 8.2 / 8.3 / 8.4</li>
+      <li>Let's Encrypt</li><li>Restic</li><li>WP-CLI</li><li>systemd</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ============================================================== compare -->
+<section id="compare">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="eyebrow">Comparison</span>
+      <h2>How it compares to the panels you already know</h2>
+      <p class="lede">
+        WPressForge targets one specific job: managing WordPress on hardware you already pay for.
+        That puts it beside the server-management panels and the open-source CLI tools — not the
+        managed hosts, which solve a different problem entirely.
+      </p>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <caption class="sr">Comparison of WPressForge with proprietary server management panels and open-source CLI tools</caption>
+        <thead>
+          <tr>
+            <th scope="col">Dimension</th>
+            <th scope="col">WPressForge</th>
+            <th scope="col">Proprietary panels<br><span class="muted" style="font-weight:400;text-transform:none;letter-spacing:0">RunCloud, GridPane, SpinupWP, Ploi</span></th>
+            <th scope="col">Open-source CLI tools<br><span class="muted" style="font-weight:400;text-transform:none;letter-spacing:0">EasyEngine, WordOps</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Where sites run</td>
+            <td class="mine">Your servers</td>
+            <td class="muted">Your servers</td>
+            <td class="muted">Your servers</td>
+          </tr>
+          <tr>
+            <td>Source code</td>
+            <td class="mine">AGPL-3.0 — readable, forkable, auditable</td>
+            <td class="muted">Closed source</td>
+            <td class="muted">Open source</td>
+          </tr>
+          <tr>
+            <td>Interface</td>
+            <td class="mine">Web UI + authenticated JSON API</td>
+            <td class="muted">Web UI</td>
+            <td class="muted">Terminal only</td>
+          </tr>
+          <tr>
+            <td>Where the panel runs</td>
+            <td class="mine">Your own box; you control it end to end</td>
+            <td class="muted">Vendor-hosted SaaS, usually required</td>
+            <td class="muted">No central panel — a CLI on each server</td>
+          </tr>
+          <tr>
+            <td>Multiple servers</td>
+            <td class="mine">One panel, many nodes, each with a TLS-pinned agent</td>
+            <td class="muted">Supported, but the coordination stays vendor-side</td>
+            <td class="muted">One server per install</td>
+          </tr>
+          <tr>
+            <td>Staging &amp; cloning</td>
+            <td class="mine">Clone, staging create and staging push</td>
+            <td class="muted">Commonly included</td>
+            <td class="muted">Not built in</td>
+          </tr>
+          <tr>
+            <td>Backups</td>
+            <td class="mine">Restic to any S3-compatible store, scheduled, with restore</td>
+            <td class="muted">Vendor-integrated</td>
+            <td class="muted">Not built in</td>
+          </tr>
+          <tr>
+            <td>Credentials &amp; data</td>
+            <td class="mine">On your infrastructure, sealed with your key</td>
+            <td class="muted">Held by the vendor</td>
+            <td class="muted">On your server</td>
+          </tr>
+          <tr>
+            <td>Cost model</td>
+            <td class="mine">Hosting you already pay; no per-site licence</td>
+            <td class="muted">Monthly subscription, often tiered per site</td>
+            <td class="muted">Free</td>
+          </tr>
+          <tr>
+            <td>Ops burden</td>
+            <td class="mine">You patch and monitor the hosts</td>
+            <td class="muted">You patch the hosts; the vendor runs the panel</td>
+            <td class="muted">You patch the hosts and drive the CLI</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">
+      Summarised in good faith as of 2026. All three columns are aiming at the same job, and the
+      commercial panels are mature products whose real feature sets run deeper than any table can
+      show. EasyEngine's open-source CLI in particular is excellent at what it does — the difference
+      is that it stops at the command line, on one server. Managed hosts such as Kinsta, WP Engine
+      and Cloudways are a different category: if you would rather not own the servers at all, they
+      will always be the better trade.
+    </p>
+  </div>
+</section>
+
+<!-- ============================================================== status -->
+<section id="status">
+  <div class="wrap">
+    <div class="callout">
+      <h3>Where the project actually stands</h3>
+      <p>
+        All planned milestones are implemented and verified — auth with CSRF, TLS-pinned agents,
+        API tokens, throttling and TOTP; sites, domains, cache and limits; WordPress management,
+        backups, clone and staging, import, metrics and alerting; teams with roles and per-site
+        grants. Quality gates are <code>cargo fmt --check</code>, <code>clippy -D warnings</code>
+        with no suppressions, and 97 passing tests.
+      </p>
+      <ul>
+        <li>
+          <strong>Proven:</strong> node operations exercised with <code>WP_AGENT_DRY_RUN=true</code>
+          — every command logged, nothing executed — plus real <code>nginx -t</code> validation of
+          both generated dialect variants.
+        </li>
+        <li>
+          <strong>Not yet proven:</strong> the first run against live Docker, MariaDB and certbot
+          still needs a shakedown, and the full site-import path needs two hosts to demonstrate
+          end to end.
+        </li>
+        <li>
+          <strong>Practical advice:</strong> do your first site on a throwaway node, with console
+          access, before moving real workloads across.
+        </li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================== start -->
+<section id="start" style="background:var(--bg-soft); border-top:1px solid var(--line-soft);">
+  <div class="wrap split">
+    <div class="section-head" style="margin-bottom:0">
+      <span class="eyebrow">Get started</span>
+      <h2>Two commands to a running panel</h2>
+      <p class="lede">
+        Run the panel with demo data on <code>127.0.0.1:8080</code> to explore the interface, and
+        a dry-run agent alongside it that logs commands instead of executing them. Nothing on the
+        host is touched until you say so.
+      </p>
+      <div class="cta-row" style="margin-top:6px">
+        <a class="btn btn-primary" href="../README.md">Read the README</a>
+        <a class="btn btn-ghost" href="DEPLOYMENT.md">Deployment guide</a>
+        <a class="btn btn-ghost" href="OPERATIONS.md">Runbook</a>
+      </div>
+    </div>
+
+    <div>
+      <pre><code><span class="c"># Panel with demo data</span>
+<span class="k">WP_PANEL_ADMIN_PASSWORD</span>=devpassword \
+  cargo run -p wp-panel
+
+<span class="c"># Dry-run agent: logs commands, touches nothing</span>
+<span class="k">WP_AGENT_TOKEN</span>=local-development-token-000001 \
+<span class="k">WP_AGENT_BIND</span>=127.0.0.1:8443 \
+<span class="k">WP_AGENT_STATE</span>=data/agent-state.json \
+  cargo run -p wp-agent
+
+<span class="c"># Or, with just:</span>
+just dev
+just agent</code></pre>
+      <p class="note">
+        For a real deployment see <a href="DEPLOYMENT.md">DEPLOYMENT.md</a>.
+        To put the panel and the sites on a single large server, start with
+        <a href="SINGLE-HOST.md">SINGLE-HOST.md</a>.
+      </p>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<!-- ============================================================== footer -->
+<footer>
+  <div class="wrap foot-inner">
+    <div>
+      <div class="brand" style="margin-bottom:8px">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <rect x="1.2" y="1.2" width="21.6" height="21.6" rx="6" stroke="url(#bgf)" stroke-width="1.5"/>
+          <path d="M7.4 8.2 9.6 15.8 12 10.2l2.4 5.6 2.2-7.6" stroke="url(#bgf)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+          <defs>
+            <linearGradient id="bgf" x1="1" y1="1" x2="23" y2="23" gradientUnits="userSpaceOnUse">
+              <stop stop-color="#34d399"/><stop offset="1" stop-color="#38bdf8"/>
+            </linearGradient>
+          </defs>
+        </svg>
+        WPressForge
+      </div>
+      <p class="fine">Open-source WordPress server manager — an alternative to RunCloud, GridPane and EasyEngine.</p>
+    </div>
+    <nav class="foot-links" aria-label="Documentation">
+      <a href="../README.md">README</a>
+      <a href="DEPLOYMENT.md">Deployment</a>
+      <a href="SINGLE-HOST.md">Single host</a>
+      <a href="OPERATIONS.md">Operations</a>
+      <a href="PROTOCOL.md">Protocol</a>
+      <a href="IMPLEMENTATION-PLAN.md">Plan</a>
+    </nav>
+    <p class="fine">AGPL-3.0-or-later</p>
+  </div>
+</footer>
+
+</body>
+</html>

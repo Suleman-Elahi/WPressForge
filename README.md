@@ -1,9 +1,13 @@
-# WP Panel
+# WPressForge
 
-Open-source control plane for hosting WordPress on your own Linux servers.
-Rust + Axum + Askama + HTMX for the panel, a Rust daemon on each node, and
-battle-tested pieces underneath: Docker, Nginx, MariaDB, Let's Encrypt, Restic,
-WP-CLI.
+Open-source WordPress server manager: a control plane for hosting WordPress on
+your own Linux servers — a self-hosted alternative to RunCloud, GridPane and
+EasyEngine. Rust + Axum + Askama + HTMX for the panel, a Rust daemon on each
+node, and battle-tested pieces underneath: Docker, Nginx, MariaDB, Let's
+Encrypt, Restic, WP-CLI.
+
+The project ships two binaries: **`wp-panel`** (the control plane) and
+**`wp-agent`** (the node agent).
 
 Architecture and roadmap: [`# Open-Source GridPane Alternative — Rev.md`](./%23%20Open-Source%20GridPane%20Alternative%20%E2%80%94%20Rev.md)
 

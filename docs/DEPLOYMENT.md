@@ -1,10 +1,15 @@
-# WPressForge / WP Panel — Production Deployment Guide
+# WPressForge — Production Deployment Guide
 
 This guide takes a clean pair of hosts (one control plane, one node) to a
 running, hardened, production WordPress hosting platform. It is written against
 the code in this repository: every env var, path, port and behaviour below is
 read from `crates/panel/src/config.rs`, `crates/agent/src/config.rs`,
 `deploy/systemd/*.service` and `deploy/install-agent.sh`.
+
+> **Naming.** The project is **WPressForge**. `wp-panel` and `wp-agent` are the
+> two binaries it ships; `WP_PANEL_*` / `WP_AGENT_*` are their environment
+> variable prefixes. Those identifiers are used verbatim throughout this guide
+> because they are what you type.
 
 > **Operational runbooks** (backup/restore, agent upgrades, triage) live in
 > [`OPERATIONS.md`](./OPERATIONS.md). This document covers *getting it running
