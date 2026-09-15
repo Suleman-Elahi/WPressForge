@@ -45,6 +45,7 @@ pub struct InspectForm {
     pub ssh_port: u16,
     pub ssh_user: String,
     pub ssh_auth: String,
+    /// Present only on this first POST; never rendered back to the browser.
     #[serde(default)]
     pub ssh_pass: String,
     #[serde(default)]
@@ -52,11 +53,24 @@ pub struct InspectForm {
     pub remote_path: String,
 }
 
+/// The non-secret half of the wizard state, safe to render as hidden inputs.
+pub struct InspectContext {
+    pub server_id: i64,
+    pub domain: String,
+    pub ssh_host: String,
+    pub ssh_port: u16,
+    pub ssh_user: String,
+    pub ssh_auth: String,
+    pub remote_path: String,
+    /// Opaque reference to the SSH secret held in [`crate::credentials`].
+    pub credential_handle: String,
+}
+
 #[derive(Template)]
 #[template(path = "imports/inspect.html")]
 struct InspectTemplate {
     chrome: Chrome,
-    form: InspectForm,
+    form: InspectContext,
     wp_version: String,
     php_version: String,
     size_mb: u64,
@@ -117,9 +131,25 @@ pub async fn inspect(
         Err(e) => return Err(AppError::BadRequest(format!("Inspection failed: {e}"))),
     };
 
+    // Keep the SSH secret in the panel's memory and hand the browser a handle.
+    let secret = match form.ssh_auth.as_str() {
+        "password" => json!({ "password": form.ssh_pass }),
+        _ => json!({ "private_key": form.ssh_key }),
+    };
+    let credential_handle = state.credentials.put(user.0.id, secret.to_string());
+
     Ok(render(InspectTemplate {
         chrome: Chrome::new(&state, &user, &session, "sites", "Import Inspection", None).await,
-        form,
+        form: InspectContext {
+            server_id: form.server_id,
+            domain: form.domain,
+            ssh_host: form.ssh_host,
+            ssh_port: form.ssh_port,
+            ssh_user: form.ssh_user,
+            ssh_auth: form.ssh_auth,
+            remote_path: form.remote_path,
+            credential_handle,
+        },
         wp_version: data.0,
         php_version: data.1,
         size_mb: data.2,
@@ -136,10 +166,8 @@ pub struct CreateForm {
     pub ssh_port: u16,
     pub ssh_user: String,
     pub ssh_auth: String,
-    #[serde(default)]
-    pub ssh_pass: String,
-    #[serde(default)]
-    pub ssh_key: String,
+    /// Handle issued by [`inspect`]; the secret itself never leaves the server.
+    pub credential_handle: String,
     pub remote_path: String,
     pub db_host: String,
     pub db_port: u16,
@@ -164,6 +192,31 @@ pub async fn create(
         return Err(AppError::BadRequest(format!("{domain} already exists")));
     }
 
+    // Recover the SSH secret from the stash before anything is written: an
+    // expired or foreign handle must fail loudly, not silently try a
+    // passwordless connection, and must not leave an orphan site row behind.
+    let stashed = state
+        .credentials
+        .take(user.0.id, &form.credential_handle)
+        .ok_or_else(|| {
+            AppError::BadRequest(
+                "This import session expired. Start again from the connection step.".into(),
+            )
+        })?;
+    let stashed: serde_json::Value = serde_json::from_str(&stashed)
+        .map_err(|_| AppError::BadRequest("Malformed import session".into()))?;
+
+    let auth = match stashed.get("private_key").and_then(|v| v.as_str()) {
+        Some(key) if !key.is_empty() => SshAuth::PrivateKey(key.to_string()),
+        _ => SshAuth::Password(
+            stashed
+                .get("password")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+        ),
+    };
+
     let php_version = PhpVersion::parse(&form.php_version).unwrap_or(PhpVersion::Php84);
 
     let site_id = db::sites::create(
@@ -187,12 +240,6 @@ pub async fn create(
         let _ = db::teams::grant_site_access(&state.db, site_id, user.0.id, "operator").await;
     }
 
-    let auth = if form.ssh_auth == "password" {
-        SshAuth::Password(form.ssh_pass.clone())
-    } else {
-        SshAuth::PrivateKey(form.ssh_key.clone())
-    };
-
     let source = ImportSource {
         host: form.ssh_host,
         port: form.ssh_port,
@@ -208,13 +255,20 @@ pub async fn create(
         }),
     };
 
+    // The payload is persisted, so the source (SSH key/password plus the remote
+    // database password) is sealed with the panel key rather than written as
+    // plaintext into the jobs table.
+    let sealed = state
+        .secrets
+        .seal(&serde_json::to_string(&source).map_err(|e| AppError::Other(e.into()))?)?;
+
     let job_id = db::jobs::enqueue(
         &state.db,
         JobKind::ImportRun,
         Some(form.server_id),
         Some(site_id),
         Some(json!({
-            "source": source,
+            "source_sealed": sealed,
             "resync": false,
         })),
         &user.0.email,

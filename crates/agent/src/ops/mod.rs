@@ -12,6 +12,7 @@ pub mod site;
 pub mod ssl;
 pub mod webserver;
 pub mod wordpress;
+pub mod wpconfig;
 
 use crate::state::AgentState;
 use wp_common::protocol::{Operation, OperationData, OperationResult};
@@ -32,7 +33,7 @@ pub async fn dispatch(state: &AgentState, operation: Operation) -> OperationResu
 
         Operation::GetSiteMetrics { site_ids } => site::get_site_metrics(state, site_ids)
             .await
-            .map(|samples| OperationResult::ok(OperationData::SiteMetrics(samples))),
+            .map(|samples| OperationResult::ok(OperationData::SiteMetrics { samples })),
 
         Operation::CreateSite(request) => site::create(state, request).await,
         Operation::CloneSite(request) => site::clone(state, request).await,
@@ -91,7 +92,7 @@ pub async fn dispatch(state: &AgentState, operation: Operation) -> OperationResu
             };
             Ok(
                 match wordpress::list_plugins(&state.config, &record).await {
-                    Ok(list) => OperationResult::ok(OperationData::Plugins(list)),
+                    Ok(list) => OperationResult::ok(OperationData::Plugins { plugins: list }),
                     Err(e) => OperationResult::err(e),
                 },
             )
@@ -102,7 +103,7 @@ pub async fn dispatch(state: &AgentState, operation: Operation) -> OperationResu
                 Err(e) => return OperationResult::err(e),
             };
             Ok(match wordpress::list_themes(&state.config, &record).await {
-                Ok(list) => OperationResult::ok(OperationData::Themes(list)),
+                Ok(list) => OperationResult::ok(OperationData::Themes { themes: list }),
                 Err(e) => OperationResult::err(e),
             })
         }
@@ -113,7 +114,7 @@ pub async fn dispatch(state: &AgentState, operation: Operation) -> OperationResu
             };
             Ok(
                 match wordpress::list_wp_users(&state.config, &record).await {
-                    Ok(list) => OperationResult::ok(OperationData::WpUsers(list)),
+                    Ok(list) => OperationResult::ok(OperationData::WpUsers { users: list }),
                     Err(e) => OperationResult::err(e),
                 },
             )
@@ -125,7 +126,7 @@ pub async fn dispatch(state: &AgentState, operation: Operation) -> OperationResu
             };
             Ok(
                 match wordpress::list_cron_events(&state.config, &record).await {
-                    Ok(list) => OperationResult::ok(OperationData::CronEvents(list)),
+                    Ok(list) => OperationResult::ok(OperationData::CronEvents { events: list }),
                     Err(e) => OperationResult::err(e),
                 },
             )
@@ -255,10 +256,12 @@ pub async fn dispatch(state: &AgentState, operation: Operation) -> OperationResu
             scope,
             target,
         } => site::restore(state, site_id, &snapshot_id, scope, target).await,
-        Operation::ListBackups { site_id, target: _ } => {
-            let _ = site_id;
-            Ok(OperationResult::ok(OperationData::Backups(Vec::new())))
-        }
+        Operation::ListBackups { site_id, target } => match state.store.get(site_id).await {
+            Ok(record) => backup::list(&state.config, &record, &target)
+                .await
+                .map(|backups| OperationResult::ok(OperationData::Backups { backups })),
+            Err(error) => Err(error),
+        },
         Operation::InitBackupRepo { target } => {
             Ok(match backup::init(&state.config, &target).await {
                 Ok(()) => OperationResult::ok(OperationData::None),
@@ -267,11 +270,7 @@ pub async fn dispatch(state: &AgentState, operation: Operation) -> OperationResu
         }
 
         Operation::InspectImportSource { source } => import::inspect(&state.config, &source).await,
-        Operation::ImportSite {
-            site_id,
-            source,
-            resync,
-        } => import::import(state, site_id, &source, resync).await,
+        Operation::ImportSite(request) => import::import(state, &request).await,
 
         Operation::TailLogs {
             site_id,

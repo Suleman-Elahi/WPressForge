@@ -1,10 +1,11 @@
 use crate::config::Config;
 use crate::exec::{self, Steps};
-use crate::ops::{database, docker, filesystem, wordpress};
+use crate::ops::{database, docker, filesystem, wordpress, wpconfig};
 use crate::state::AgentState;
+use crate::store::SiteRecord;
 use std::os::unix::fs::PermissionsExt;
 use wp_common::models::SiteStatus;
-use wp_common::protocol::{ImportSource, OperationData, OperationResult, SshAuth};
+use wp_common::protocol::{ImportRequest, ImportSource, OperationData, OperationResult, SshAuth};
 use wp_common::{Error, Result};
 
 struct TempKey {
@@ -155,19 +156,39 @@ pub async fn inspect(config: &Config, source: &ImportSource) -> Result<Operation
     }))
 }
 
-pub async fn import(
-    state: &AgentState,
-    site_id: i64,
-    source: &ImportSource,
-    resync: bool,
-) -> Result<OperationResult> {
+pub async fn import(state: &AgentState, request: &ImportRequest) -> Result<OperationResult> {
     let config = &state.config;
+    let source = &request.source;
+    let resync = request.resync;
     let mut steps = Steps::new();
-    let mut record = state.store.get(site_id).await?;
 
-    if config.dry_run {
-        return Ok(OperationResult::ok(OperationData::None));
-    }
+    // A first import describes a site the agent has never seen, so the record is
+    // built here; only a resync expects to find an existing one. Looking the site
+    // up unconditionally is what made every import fail with
+    // "site N is not managed by this agent".
+    let mut record = if resync {
+        state.store.get(request.site_id).await?
+    } else {
+        if let Ok(existing) = state.store.get(request.site_id).await {
+            return Err(Error::Conflict(format!(
+                "site {} is already managed as {}; use resync",
+                request.site_id, existing.domain
+            )));
+        }
+        SiteRecord {
+            site_id: request.site_id,
+            domain: request.domain.clone(),
+            uid: state.store.next_uid(config.uid_base).await,
+            php_version: request.php_version,
+            database_mode: request.database_mode,
+            limits: request.limits,
+            cache: request.cache,
+            status: SiteStatus::Provisioning,
+            container_id: None,
+            db_name: database::db_name(&request.domain),
+            domains: vec![request.domain.clone()],
+        }
+    };
 
     let key = TempKey::new(&source.auth)?;
     let mut ssh_base = vec![
@@ -248,9 +269,16 @@ pub async fn import(
         .ok_or_else(|| Error::invalid("remote db credentials required for import"))?;
     let mut dump_cmd = ssh_base.clone();
     dump_cmd.push(ssh_target.clone());
+    // Every value is shell-quoted: this string is executed by the *remote*
+    // shell, so an unescaped quote in a password would run as a command there.
     dump_cmd.push(format!(
-        "mysqldump -h{} -P{} -u{} -p'{}' --single-transaction {}",
-        db_info.host, db_info.port, db_info.user, db_info.password, db_info.name
+        "mysqldump --host={host} --port={port} --user={user} --password={password} \
+         --single-transaction --quick {name}",
+        host = exec::shell_quote(&db_info.host),
+        port = exec::shell_quote(&db_info.port.to_string()),
+        user = exec::shell_quote(&db_info.user),
+        password = exec::shell_quote(&db_info.password),
+        name = exec::shell_quote(&db_info.name),
     ));
 
     let dump_out = steps
@@ -264,19 +292,22 @@ pub async fn import(
         .map_err(|e| Error::internal(format!("failed to write db dump: {e}")))?;
     let _dump_cleanup = DumpCleanup(dump_file.clone());
 
-    let credentials = database::Credentials {
-        name: record.db_name.clone(),
-        user: filesystem::system_user(&record.domain),
-        password: database::generate_password(),
-        host: "127.0.0.1".to_string(),
-    };
-
-    if !resync {
+    // On a resync the database and wp-config.php already exist and must keep
+    // their credentials; only a first import mints new ones.
+    let credentials = if resync {
+        let existing = wpconfig::read_db_config(config, &record).await?;
+        database::Credentials {
+            name: existing.name,
+            user: existing.user,
+            password: existing.password,
+            host: existing.host,
+        }
+    } else {
         // 6. Create database
         steps
             .step("Create database", database::create(config, &record))
-            .await?;
-    }
+            .await?
+    };
 
     // 7. Import database
     steps
@@ -295,35 +326,60 @@ pub async fn import(
         .await?;
     record.container_id = Some(container_id);
 
-    // 9. Configure WordPress
-    steps
+    // 9. Configure WordPress. The source wp-config.php is deliberately never
+    //    copied (see the rsync exclude), so a first import writes a fresh one
+    //    with local credentials; a resync keeps the file it already has.
+    if !resync {
+        steps
+            .step(
+                "Configure WordPress",
+                wordpress::wp(
+                    config,
+                    &record.container_name(),
+                    &[
+                        "config",
+                        "create",
+                        &format!("--dbname={}", credentials.name),
+                        &format!("--dbuser={}", credentials.user),
+                        &format!("--dbpass={}", credentials.password),
+                        &format!("--dbhost={}", credentials.host),
+                        "--allow-root",
+                        "--force",
+                    ],
+                ),
+            )
+            .await?;
+    }
+
+    // 10. Search & replace the site URL. The old URL comes from the imported
+    //     database; an earlier version passed the *database name* as the search
+    //     string, so it replaced nothing.
+    let old_url = steps
         .step(
-            "Configure WordPress",
+            "Read source site URL",
             wordpress::wp(
                 config,
                 &record.container_name(),
-                &[
-                    "config",
-                    "create",
-                    &format!("--dbname={}", credentials.name),
-                    &format!("--dbuser={}", credentials.user),
-                    &format!("--dbpass={}", credentials.password),
-                    "--dbhost=127.0.0.1",
-                    "--allow-root",
-                    "--force",
-                ],
+                &["option", "get", "siteurl", "--allow-root"],
             ),
         )
-        .await?;
-
-    // 10. Search & replace
-    steps
-        .step(
-            "Search & replace",
-            wordpress::search_replace(config, &record, &db_info.name, &record.domain),
-        )
         .await
-        .ok();
+        .map(|out| out.trimmed_stdout().to_string())
+        .unwrap_or_default();
+
+    let new_url = format!("https://{}", record.domain);
+    if !old_url.is_empty() && old_url != new_url {
+        steps
+            .step(
+                "Search & replace",
+                wordpress::search_replace(config, &record, &old_url, &new_url),
+            )
+            .await
+            .ok();
+        steps.note("Search & replace", format!("{old_url} -> {new_url}"));
+    } else {
+        steps.note("Search & replace", "site URL unchanged");
+    }
 
     // 11. Verify checksums
     if let Ok(out) = steps

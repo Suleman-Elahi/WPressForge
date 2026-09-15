@@ -112,21 +112,10 @@ pub async fn test(
     let dest = db::destinations::get(&state.db, id)
         .await?
         .ok_or(AppError::NotFound)?;
-    let creds = db::destinations::decrypt_credentials(&dest, &state.secrets)?;
+    let _creds = db::destinations::decrypt_credentials(&dest, &state.secrets)?;
 
     // Build a ResticTarget and try to init the repo.
-    let target = wp_common::protocol::ResticTarget {
-        repo: format!(
-            "s3:{}/{}",
-            dest.endpoint.as_deref().unwrap_or("s3.amazonaws.com"),
-            dest.bucket
-        ),
-        password: creds.restic_password,
-        env: vec![
-            ("AWS_ACCESS_KEY_ID".into(), creds.access_key_id),
-            ("AWS_SECRET_ACCESS_KEY".into(), creds.secret),
-        ],
-    };
+    let target = db::destinations::restic_target(&dest, &state.secrets)?;
 
     // Use the first online server for the test.
     let servers = db::servers::list(&state.db).await?;

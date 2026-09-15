@@ -22,7 +22,7 @@
     {% endif %}
 
     {% if let Some(token) = pending_totp_token %}
-    <form method="post" action="/login/totp">
+    <form method="post" action="/login">
       <input type="hidden" name="email" value="{{ email }}">
       <input type="hidden" name="pending_token" value="{{ token }}">
       <div class="field">

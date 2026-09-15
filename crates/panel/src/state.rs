@@ -14,6 +14,8 @@ pub struct AppState {
     pub agent: AgentClient,
     pub csrf: Arc<CsrfKey>,
     pub secrets: Arc<SecretBox>,
+    /// Wizard credentials held server-side so the browser never sees them.
+    pub credentials: Arc<crate::credentials::CredentialStash>,
     /// Woken whenever a job is enqueued so workers react without polling delay.
     pub job_signal: Arc<Notify>,
     pub started_at: std::time::Instant,
@@ -33,6 +35,7 @@ impl AppState {
             agent,
             csrf: Arc::new(csrf),
             secrets: Arc::new(secrets),
+            credentials: Arc::new(crate::credentials::CredentialStash::new()),
             job_signal: Arc::new(Notify::new()),
             started_at: std::time::Instant::now(),
         }

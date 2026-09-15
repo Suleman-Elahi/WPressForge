@@ -247,7 +247,7 @@ async fn heartbeat_loop(state: AppState) {
                         )
                         .await
                     {
-                        Ok(wp_common::protocol::OperationData::SiteMetrics(samples)) => {
+                        Ok(wp_common::protocol::OperationData::SiteMetrics { samples }) => {
                             for sample in &samples {
                                 let _ = db::metrics::insert_site(&state.db, sample).await;
                             }
@@ -404,6 +404,39 @@ async fn simulate(state: &AppState, job: &JobRow) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Resolves the restic target for a backup job: the destination named in the
+/// payload, else the site's scheduled destination, else an empty target so a
+/// single-server install can fall back to the agent's own `--restic-repo`.
+async fn resolve_restic_target(
+    state: &AppState,
+    site_id: i64,
+    payload: &serde_json::Value,
+) -> wp_common::protocol::ResticTarget {
+    let empty = || wp_common::protocol::ResticTarget {
+        repo: String::new(),
+        password: String::new(),
+        env: Vec::new(),
+    };
+
+    if let Some(id) = payload.get("destination_id").and_then(|v| v.as_i64()) {
+        match db::destinations::get(&state.db, id).await {
+            Ok(Some(dest)) => match db::destinations::restic_target(&dest, &state.secrets) {
+                Ok(target) => return target,
+                Err(error) => {
+                    tracing::warn!(destination = id, %error, "unusable backup destination");
+                    return empty();
+                }
+            },
+            _ => return empty(),
+        }
+    }
+
+    match db::destinations::for_site(&state.db, &state.secrets, site_id).await {
+        Ok(Some((_, target))) => target,
+        _ => empty(),
+    }
+}
+
 /// Maps a job row + payload to the agent operation that performs it.
 /// Now async because backup operations need to resolve destinations from the database.
 async fn build_operation(
@@ -475,28 +508,7 @@ async fn build_operation(
         },
         JobKind::SslRenew => Operation::RenewCertificate { site_id },
         JobKind::BackupCreate => {
-            let destination_id = payload.get("destination_id").and_then(|v| v.as_i64());
-            let target = match destination_id {
-                Some(id) => {
-                    let dest = db::destinations::get(&state.db, id).await.ok().flatten()?;
-                    let creds =
-                        db::destinations::decrypt_credentials(&dest, &state.secrets).ok()?;
-                    let endpoint = dest.endpoint.as_deref().unwrap_or("s3.amazonaws.com");
-                    wp_common::protocol::ResticTarget {
-                        repo: format!("s3:{}/{}", endpoint, dest.bucket),
-                        password: creds.restic_password,
-                        env: vec![
-                            ("AWS_ACCESS_KEY_ID".into(), creds.access_key_id),
-                            ("AWS_SECRET_ACCESS_KEY".into(), creds.secret),
-                        ],
-                    }
-                }
-                None => wp_common::protocol::ResticTarget {
-                    repo: String::new(),
-                    password: String::new(),
-                    env: Vec::new(),
-                },
-            };
+            let target = resolve_restic_target(state, site_id, payload).await;
             Operation::CreateBackup {
                 site_id,
                 scope: serde_json::from_value(payload.get("scope").cloned().unwrap_or_default())
@@ -506,28 +518,7 @@ async fn build_operation(
             }
         }
         JobKind::BackupRestore => {
-            let destination_id = payload.get("destination_id").and_then(|v| v.as_i64());
-            let target = match destination_id {
-                Some(id) => {
-                    let dest = db::destinations::get(&state.db, id).await.ok().flatten()?;
-                    let creds =
-                        db::destinations::decrypt_credentials(&dest, &state.secrets).ok()?;
-                    let endpoint = dest.endpoint.as_deref().unwrap_or("s3.amazonaws.com");
-                    wp_common::protocol::ResticTarget {
-                        repo: format!("s3:{}/{}", endpoint, dest.bucket),
-                        password: creds.restic_password,
-                        env: vec![
-                            ("AWS_ACCESS_KEY_ID".into(), creds.access_key_id),
-                            ("AWS_SECRET_ACCESS_KEY".into(), creds.secret),
-                        ],
-                    }
-                }
-                None => wp_common::protocol::ResticTarget {
-                    repo: String::new(),
-                    password: String::new(),
-                    env: Vec::new(),
-                },
-            };
+            let target = resolve_restic_target(state, site_id, payload).await;
             Operation::RestoreBackup {
                 site_id,
                 snapshot_id: payload
@@ -584,17 +575,42 @@ async fn build_operation(
                 .unwrap_or(CronMode::WpCron),
         },
         JobKind::ImportRun => {
-            let source =
-                serde_json::from_value(payload.get("source").cloned().unwrap_or_default()).ok()?;
+            // The source carries SSH and database credentials, so the payload
+            // stores it sealed. `source` (plaintext) is accepted only so jobs
+            // queued by an older build still run.
+            let source = match payload.get("source_sealed").and_then(|v| v.as_str()) {
+                Some(sealed) => {
+                    let plain = state
+                        .secrets
+                        .open(sealed)
+                        .inspect_err(|error| {
+                            tracing::error!(%error, "cannot open sealed import source");
+                        })
+                        .ok()?;
+                    serde_json::from_str(&plain).ok()?
+                }
+                None => serde_json::from_value(payload.get("source").cloned().unwrap_or_default())
+                    .ok()?,
+            };
             let resync = payload
                 .get("resync")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
-            Operation::ImportSite {
+
+            // The agent has no record of this site yet, so the request carries
+            // its definition alongside the source.
+            let site = db::sites::get(&state.db, site_id).await.ok().flatten()?;
+
+            Operation::ImportSite(wp_common::protocol::ImportRequest {
                 site_id,
+                domain: site.site.domain,
+                php_version: site.site.php_version,
+                database_mode: site.site.database_mode,
+                limits: site.site.limits,
+                cache: site.site.cache,
                 source,
                 resync,
-            }
+            })
         }
         JobKind::SiteClone | JobKind::StagingCreate | JobKind::StagingPush => {
             let source_site_id = payload
@@ -665,13 +681,26 @@ async fn apply_effects(
         .await?
         .unwrap_or_default();
 
+    // Clone and staging jobs carry the new site in `target_site_id`; every other
+    // kind acts on the job's own site.
+    let target_site_id = payload
+        .get("target_site_id")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(site_id);
+
     match job.job.kind {
         JobKind::SiteCreate
         | JobKind::SiteStart
         | JobKind::SiteRestart
         | JobKind::SiteClone
+        | JobKind::StagingCreate
         | JobKind::ImportRun => {
-            db::sites::set_status(&state.db, site_id, SiteStatus::Online).await?;
+            // StagingCreate/SiteClone previously left the new site stuck on
+            // "provisioning" because only the job's own site was updated.
+            db::sites::set_status(&state.db, target_site_id, SiteStatus::Online).await?;
+            if matches!(job.job.kind, JobKind::SiteClone | JobKind::StagingCreate) {
+                db::sites::set_wp_version(&state.db, target_site_id, "6.7.1").await?;
+            }
             if job.job.kind == JobKind::SiteCreate {
                 db::sites::set_wp_version(&state.db, site_id, "6.7.1").await?;
                 if payload
@@ -723,18 +752,40 @@ async fn apply_effects(
             .await?;
         }
         JobKind::BackupCreate => {
-            let (snapshot, size) = match data {
+            let scope = serde_json::from_value(payload.get("scope").cloned().unwrap_or_default())
+                .unwrap_or(BackupScope::Full);
+            let repo = match db::destinations::for_site(&state.db, &state.secrets, site_id).await {
+                Ok(Some((dest, _))) => Some(dest.name),
+                _ => None,
+            };
+
+            // No fabricated sizes: when the worker ran the simulated plan there
+            // is no snapshot, and the row must say so rather than invent 1.1 GB.
+            let record = match data {
                 Some(OperationData::Backup {
                     snapshot_id,
                     size_bytes,
-                }) => (snapshot_id.clone(), *size_bytes),
-                _ => (
-                    crate::auth::random_token()[..8].to_lowercase(),
-                    1_150_000_000,
-                ),
+                    files_bytes,
+                    db_bytes,
+                }) => db::sites::NewBackup {
+                    snapshot_id: snapshot_id.clone(),
+                    scope,
+                    size_bytes: *size_bytes,
+                    files_bytes: *files_bytes,
+                    db_bytes: *db_bytes,
+                    restic_repo: repo,
+                },
+                _ => db::sites::NewBackup {
+                    snapshot_id: "simulated".to_string(),
+                    scope,
+                    size_bytes: 0,
+                    files_bytes: 0,
+                    db_bytes: 0,
+                    restic_repo: repo,
+                },
             };
-            db::sites::record_backup(&state.db, site_id, &snapshot, BackupScope::Full, size)
-                .await?;
+
+            db::sites::upsert_backup(&state.db, site_id, &record).await?;
         }
         _ => {}
     }
@@ -743,10 +794,10 @@ async fn apply_effects(
 }
 
 async fn mark_site_failed(state: &AppState, job: &JobRow) -> anyhow::Result<()> {
-    if job.job.kind == JobKind::SiteCreate {
-        if let Some(site_id) = job.job.site_id {
-            db::sites::set_status(&state.db, site_id, SiteStatus::Failed).await?;
-        }
+    if job.job.kind == JobKind::SiteCreate
+        && let Some(site_id) = job.job.site_id
+    {
+        db::sites::set_status(&state.db, site_id, SiteStatus::Failed).await?;
     }
     Ok(())
 }

@@ -1,0 +1,31 @@
+{# HTMX fragment: the tail of one log stream.
+   Askama escapes `content` for us, which matters more here than anywhere else:
+   log lines contain attacker-controlled strings. #}
+{% match error %}
+  {% when Some with (message) %}
+    <div class="banner warn" role="alert">
+      <strong>Could not read the log</strong>
+      <span>{{ message }}</span>
+    </div>
+  {% when None %}
+    {% if content.is_empty() %}
+      <div class="empty">
+        {% match filter %}
+          {% when Some with (pattern) %}
+            <h3>No matching lines</h3>
+            <p class="muted">
+              Nothing in <span class="mono">{{ stream }}.log</span> contains
+              <span class="mono">{{ pattern }}</span>.
+            </p>
+          {% when None %}
+            <h3>No entries yet</h3>
+            <p class="muted">
+              Nothing has been written to <span class="mono">{{ stream }}.log</span> for
+              this site. It appears as soon as the site serves traffic.
+            </p>
+        {% endmatch %}
+      </div>
+    {% else %}
+      <pre class="log">{{ content }}</pre>
+    {% endif %}
+{% endmatch %}

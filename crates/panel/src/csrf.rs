@@ -30,10 +30,6 @@ impl CsrfKey {
         let now = day_bucket(chrono::Utc::now());
         let previous = now - 1;
 
-        // Compute expected tokens for both buckets.
-        let expected_current = self.hmac_bytes(session_token, now);
-        let expected_previous = self.hmac_bytes(session_token, previous);
-
         // Decode the presented token.
         let presented_bytes =
             match base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(presented) {
@@ -45,16 +41,16 @@ impl CsrfKey {
             return false;
         }
 
-        // Constant-time compare against both expected values.
-        let mut mac = HmacSha256::new_from_slice(&self.0).expect("HMAC accepts any key length");
-        mac.update(&presented_bytes);
-        let ok1 = mac.verify_slice(&expected_current).is_ok();
-
-        let mut mac = HmacSha256::new_from_slice(&self.0).expect("HMAC accepts any key length");
-        mac.update(&presented_bytes);
-        let ok2 = mac.verify_slice(&expected_previous).is_ok();
-
-        ok1 || ok2
+        // `verify_slice` recomputes the MAC over the payload we feed it and
+        // compares it with the presented tag in constant time. Feeding the
+        // payload (not the tag) is the whole point: an earlier version passed
+        // these the other way round, so no token ever verified.
+        [now, previous].iter().any(|bucket| {
+            let payload = format!("{session_token}:{bucket}");
+            let mut mac = HmacSha256::new_from_slice(&self.0).expect("HMAC accepts any key length");
+            mac.update(payload.as_bytes());
+            mac.verify_slice(&presented_bytes).is_ok()
+        })
     }
 
     fn hmac_bytes(&self, session_token: &str, bucket: i64) -> Vec<u8> {
@@ -85,5 +81,71 @@ pub fn check_token(
     match (session_token, presented) {
         (Some(session), Some(token)) => csrf_key.verify(session, token),
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn key() -> CsrfKey {
+        CsrfKey([7u8; 32])
+    }
+
+    #[test]
+    fn a_freshly_issued_token_verifies() {
+        let key = key();
+        let token = key.token("session-abc");
+        assert!(
+            key.verify("session-abc", &token),
+            "token issued for a session must verify for that session"
+        );
+    }
+
+    #[test]
+    fn a_token_is_bound_to_its_session() {
+        let key = key();
+        let token = key.token("session-abc");
+        assert!(!key.verify("session-xyz", &token));
+    }
+
+    #[test]
+    fn a_token_is_bound_to_the_key() {
+        let token = key().token("session-abc");
+        let other = CsrfKey([9u8; 32]);
+        assert!(!other.verify("session-abc", &token));
+    }
+
+    #[test]
+    fn rejects_empty_tampered_and_short_tokens() {
+        let key = key();
+        let token = key.token("session-abc");
+
+        assert!(!key.verify("session-abc", ""));
+        assert!(!key.verify("session-abc", "not-base64!!"));
+        assert!(!key.verify("session-abc", &token[..token.len() - 2]));
+
+        let mut tampered = token.clone().into_bytes();
+        tampered[0] = if tampered[0] == b'A' { b'B' } else { b'A' };
+        assert!(!key.verify("session-abc", &String::from_utf8(tampered).unwrap()));
+    }
+
+    #[test]
+    fn yesterdays_token_still_verifies_but_older_does_not() {
+        let key = key();
+        let now = day_bucket(chrono::Utc::now());
+
+        assert!(key.verify("s", &key.make_token("s", now - 1)));
+        assert!(!key.verify("s", &key.make_token("s", now - 2)));
+    }
+
+    #[test]
+    fn check_token_requires_both_session_and_token() {
+        let key = key();
+        let token = key.token("s");
+
+        assert!(check_token(&key, Some("s"), Some(&token)));
+        assert!(!check_token(&key, None, Some(&token)));
+        assert!(!check_token(&key, Some("s"), None));
     }
 }

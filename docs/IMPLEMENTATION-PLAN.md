@@ -10,6 +10,15 @@ Companion documents:
 - Architecture and product vision: [`../# Open-Source GridPane Alternative — Rev.md`](../%23%20Open-Source%20GridPane%20Alternative%20%E2%80%94%20Rev.md)
 - Operator-facing overview: [`../README.md`](../README.md)
 
+Audited and hardened on 2026-09-15: M1–M7 and X1 are implemented and verified
+working. Two rounds found and fixed 24 defects — 3 fatal on a fresh install, 6
+that made a documented feature impossible. `../status` holds both defect tables,
+the evidence, and the five remaining (non-blocking) items.
+
+Gates now enforced: `cargo fmt --check`, `clippy -D warnings` with **zero**
+suppressions anywhere in the tree, 97 tests across unit / repository / HTTP /
+host layers.
+
 Last verified against the code on 2026-09-14: `cargo check --workspace
 --all-targets` clean, `cargo test --workspace` green (13 tests), the `--ignored`
 `nginx -t` host test green against Nginx 1.26.3, and a panel → agent → job
@@ -181,6 +190,39 @@ Closed already, listed so nobody re-introduces them:
 | F1 | `http2 on;` emitted unconditionally — invalid before Nginx 1.25.1, so `nginx -t` failed on Debian 12 (1.22) and Ubuntu 24.04 (1.24), failing every `site.create` at the reload step | `crates/agent/src/capabilities.rs` probes `nginx -V`; `render_vhost` emits `listen 443 ssl http2;` below 1.25.1 |
 | F2 | `brotli on;` emitted whenever `CacheSettings.brotli` was true (the default) — `ngx_brotli` is not in distro packages, same failure mode | Brotli block only when the module is present, otherwise `gzip_static on;` |
 | F3 | Cache path hardcoded to `/var/cache/nginx` | `Config::cache_root` / `Config::cache_dir(domain)` |
+| F4 | Agent panicked at startup: no rustls `CryptoProvider` could be selected (`rcgen` pulled `aws-lc-rs` alongside `ring`) | `rcgen` pinned to `ring`; both binaries install the provider explicitly |
+| F5 | `CsrfKey::verify` compared the wrong values, so every mutating request was rejected | fixed and covered by 6 tests in `csrf.rs` |
+| F6 | Certificate pinning was unusable: no form field, `agent_fingerprint` always `NULL` | field + normalisation + persistence; `https` without a pin and non-loopback `http` are refused |
+| F7 | `user_for_session` omitted the TOTP columns, so 2FA could not be enabled | session query derives its columns from `COLUMNS`; test asserts arity |
+| F8 | 2FA login was impossible and a session was created before the second factor | two-stage `login_submit`, signed 5-minute challenge, throttled |
+| F9 | Seven `OperationData` list variants failed to serialise (internally tagged newtype around a `Vec`) | named fields + a round-trip test over every variant |
+| F10 | `CloneForm.request_ssl: bool` rejected every checkbox submission | `Option<String>` + `checked()` |
+| F11 | Clone/staging left the new site `provisioning` | `apply_effects` handles `StagingCreate` and resolves `target_site_id` |
+| F12 | JSON API ignored RBAC and returned every site, server and job | all six handlers scope to the caller |
+| F13 | Agent logged WordPress, restic and MySQL passwords in cleartext | `exec::redact_command` + 5 tests |
+
+Second round, from closing the audit's open issues:
+
+| # | Was | Fix |
+| --- | --- | --- |
+| F14 | Agent `ListBackups` returned an empty list; `backup::list` parsed restic's `snapshots --json` into a struct whose fields do not exist there | real `ResticSnapshot` DTO, wired into dispatch |
+| F15 | "Sync from node" sent an empty restic target, ignored the reply, always flashed success | resolves the destination, idempotent upsert, honest counts |
+| F16 | Import always failed with "site N is not managed by this agent" | `ImportSite` carries an `ImportRequest`; the agent builds the record on a first import |
+| F17 | Import's search/replace was given the database name as the search string | reads the old URL via `wp option get siteurl` |
+| F18 | Clone/staging copied the database with an empty password | `ops/wpconfig.rs` parses the source `wp-config.php` |
+| F19 | `set_db_config` wrote unquoted PHP values (`--raw`) | `--raw` removed |
+| F20 | A viewer posting a malformed form got 422 from the extractor, never reaching the role check | read-only enforced in `require_session` middleware |
+| F21 | SSH and remote-DB passwords in hidden form fields and in `jobs.payload` | `CredentialStash` handle + `SecretBox`-sealed payload |
+| F22 | Log grep stripped characters from the pattern; missing file was a raw error; no-match was an error | shell-quoting, `|| true`, empty state, template escaping |
+| F23 | Worker/sync backups all labelled `local`; `repo_prefix` unused; simulated jobs recorded a fake 1.15 GB | destination fallback, single `restic_target` builder, honest zero sizes |
+
+**Rule learned from F5/F7/F9/F12 and the whole second round:** a feature is not
+done until it has been exercised over HTTP against a running panel *and* agent.
+Everything above compiled, type-checked and passed the then-current suite.
+
+**Corollary, learned from F14/F15/F16:** a blanket `#![allow(dead_code)]` hides
+unimplemented features. The agent's dead-code warnings were pointing straight at
+three of them. Never suppress lints crate-wide.
 
 ---
 
@@ -347,6 +389,21 @@ attribute conditionally, the way `templates/jobs/progress.html` does.
    `crates/agent/src/ops/nginx.rs`. An invalid directive fails `nginx -t`, which
    fails the reload step, which fails the whole job.
 7. Site operations call `state.web.*` (§2.9), never `nginx::*` directly.
+8. Argv is logged through `exec::redact_command`, never `{args:?}`. Passwords
+   reach commands as arguments in several places; the logger is the only thing
+   standing between them and the journal.
+9. Every JSON API handler scopes its query to the caller with
+   `db::sites::list_for_user` / `get_for_user` / `db::teams::has_global_access`.
+   The HTML routes are not the only path to the data.
+10. Forms never bind a checkbox to `bool`. Use `Option<String>` plus `checked()`:
+    a checkbox arrives as `on` or not at all, and `bool` rejects both.
+11. Values interpolated into a `sh -c` fragment go through `exec::shell_quote`.
+    That includes strings destined for a *remote* shell over SSH.
+12. Authorisation that must hold for every request shape belongs in middleware,
+    not a handler body: extractors run first, so a malformed body would answer
+    422 before a handler-level role check is ever reached.
+13. No crate-wide `allow` attributes. If a lint fires, fix it or annotate the one
+    item, with a reason.
 
 ### 2.8 Recipe: gate output on host capabilities
 
@@ -1496,9 +1553,9 @@ new post created on A after the first import.
 
 | Layer | Tool | What to cover |
 | --- | --- | --- |
-| Unit | `#[cfg(test)]` in place | **done:** `capabilities::parse` (3 distro variants + boundary), `nginx::render_vhost` (7 cases), `render_cache_zone`. **Todo:** `fmt::*`, `csrf` verify, `tokenize`, `valid_domain`, `filesystem::system_user` |
-| Repo | `sqlx` against a temp file DB | each `db::*` function: create → read → update → delete |
-| HTTP | `tower::ServiceExt::oneshot` on the router | login redirect, CSRF rejection, 404 page, API auth |
+| Unit | `#[cfg(test)]` in place | **done:** `capabilities::parse`, `nginx::render_vhost` + purge gating, `exec::redact_command`, `csrf` issue/verify/tamper, session column arity, `secrets` seal/open, TOTP vectors + base32, fingerprint normalisation, loopback detection, mu-plugin hooks, import dry-run, `OperationData` round-trip over every variant. **Todo:** `fmt::*`, `tokenize`, `valid_domain`, `filesystem::system_user` |
+| Repo | `sqlx` against a temp file DB | **done:** `crates/panel/tests/repo.rs`, 18 tests over every `db::*` module, including the exact regression for F7. Use a temp *file*: `sqlite::memory:` is per-connection, so a pooled test silently talks to several empty databases. |
+| HTTP | `tower::ServiceExt::oneshot` on the router | **done:** `crates/panel/tests/http.rs`, 18 tests covering CSRF accept/reject/cross-session, viewer read-only across endpoints and body shapes, operator grants, API auth and API scoping. F2, F9, F12 and F20 each have a test now. |
 | Agent | fake `exec` | inject a command recorder so `site::create` can be asserted step-by-step without Docker |
 | Host | `--ignored` tests | **done for Nginx:** `just test-nginx` renders both dialects and runs `nginx -t` with a temp prefix and self-signed cert. Run it on every OS you support before release |
 
@@ -1509,6 +1566,10 @@ object stored in `AgentState` (`Arc<dyn CommandRunner>`), with `RealRunner` and
 Add `crates/panel/tests/http.rs` and `crates/agent/tests/ops.rs`. Target: every
 new milestone ships tests for its pure functions and at least one end-to-end
 router test.
+
+Blanket `allow` attributes defeat the point of linting. They have been removed
+(the tree now has zero suppressions) and `clippy -D warnings` passes; keep it
+that way. Removing them is what exposed F14, F15 and F16.
 
 ### 9.3 CI
 
@@ -1611,16 +1672,16 @@ Update this table in the same commit that finishes a milestone.
 | Milestone | Scope | State | Blocking |
 | --- | --- | --- | --- |
 | M0 | Scaffold: auth, servers, sites, jobs, agent ops, UI | **done** | — |
-| M0.1 | Nginx capability probe, version-correct vhosts, `WebServer` seam, 13 unit tests + `nginx -t` host test | **done** | — |
-| M1 | CSRF, TLS pinning, API tokens, login throttle, 2FA | **done** | — |
-| M2 | Plugins, themes, users, cron, WP-CLI console | **done** | — |
-| M3 | Destinations, schedules, retention, restore | **done** | — |
-| M4 | Clone, staging, push | **done** | — |
-| M5 | Log viewer, metrics history, alerts | **done** | — |
-| M6 | Import existing sites | **done** | — |
-| M7 | Teams, roles, invitations | **done** | — |
+| M0.1 | Nginx capability probe, version-correct vhosts, `WebServer` seam | **done** | — |
+| M1 | CSRF, TLS pinning, API tokens, login throttle, 2FA | **done, audited** | — |
+| M2 | Plugins, themes, users, cron, WP-CLI console, purge mu-plugin | **done, audited** | — |
+| M3 | Destinations, schedules, retention, restore | **done, audited** | — |
+| M4 | Clone, staging, push | **done, audited** | — |
+| M5 | Log viewer, metrics history, alerts | **done, audited** | — |
+| M6 | Import existing sites | **done, audited** | full run needs two hosts (status §5 A) |
+| M7 | Teams, roles, invitations | **done, audited** | — |
 | M8 | OpenLiteSpeed backend (conditional, see §9.5) | not planned | explicit user demand |
-| X1 | Tests + CI | **done** | — |
+| X1 | Tests + CI | **done**: 97 tests + 1 ignored, zero lint suppressions | — |
 
 ---
 

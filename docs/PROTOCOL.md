@@ -144,6 +144,18 @@ Every request and response between the panel and agent is framed within standard
 | `InstallWordpress`| `install_wordpress`| `site_id`, `site_title`, `admin_user`, `admin_email`, `admin_password`, `locale` | `none` | Runs `wp core download` and `wp core install`. |
 | `UpdateWordpress` | `update_wordpress` | `site_id: i64` | `none` | Updates WordPress core via `wp core update`. |
 | `ListPlugins` | `list_plugins` | `site_id: i64` | `plugins` | Lists installed plugins, versions, status, and update availability. |
+
+### `core_check_update`
+
+Returns the installed core version and the latest available one.
+
+```json
+{ "operation": "core_check_update", "site_id": 12 }
+```
+
+Response: `OperationData::CoreUpdate { current, latest }` — `latest` is `null` when
+the site is already current.
+
 | `PluginAction` | `plugin_action` | `site_id: i64`, `slug: string`, `action: string` | `none` | Activates, deactivates, updates, or deletes a plugin. |
 | `UpdateAllPlugins`| `update_all_plugins`| `site_id: i64` | `none` | Runs bulk update for all installed plugins. |
 | `ListThemes` | `list_themes` | `site_id: i64` | `themes` | Lists installed themes, versions, status, and active theme. |

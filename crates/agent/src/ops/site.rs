@@ -1,7 +1,7 @@
 //! Site lifecycle: the sequence the panel's `site.create` job depends on.
 
 use crate::exec::{self, Steps};
-use crate::ops::{backup, database, docker, filesystem, mu_plugin, ssl, wordpress};
+use crate::ops::{backup, database, docker, filesystem, mu_plugin, ssl, wordpress, wpconfig};
 use crate::state::AgentState;
 use crate::store::SiteRecord;
 use wp_common::models::{
@@ -590,6 +590,8 @@ pub async fn backup(
     Ok(OperationResult::ok(OperationData::Backup {
         snapshot_id: snapshot.id,
         size_bytes: snapshot.size_bytes,
+        files_bytes: snapshot.files_bytes,
+        db_bytes: snapshot.db_bytes,
     })
     .with_steps(steps.into_reports()))
 }
@@ -646,62 +648,48 @@ pub async fn tail_logs(
             .to_string(),
     };
 
-    // Validate grep pattern: max 64 chars, no regex metacharacters (use -F for fixed string).
-    let safe_grep = grep_pattern
-        .filter(|p| !p.is_empty() && p.len() <= 64)
-        .map(|p| {
-            p.replace(
-                |c: char| {
-                    matches!(
-                        c,
-                        '\\' | '['
-                            | ']'
-                            | '('
-                            | ')'
-                            | '+'
-                            | '?'
-                            | '{'
-                            | '}'
-                            | '^'
-                            | '$'
-                            | '.'
-                            | '*'
-                            | '|'
-                            | '&'
-                            | ';'
-                    )
-                },
-                "",
-            )
-        });
+    // The pattern is passed to `grep -F`, so it is a literal string: quoting is
+    // enough and no characters need removing. Stripping them (as an earlier
+    // version did) silently searched for something else than the operator typed.
+    let safe_grep = grep_pattern.filter(|p| !p.is_empty() && p.len() <= 64);
 
-    let output = if let Some(ref pattern) = safe_grep {
-        crate::exec::run(
-            false,
-            "sh",
-            &[
-                "-c",
-                &format!(
-                    "tail -n {} {} | grep -F {}",
-                    lines.clamp(1, 5000),
-                    path,
-                    pattern
-                ),
-            ],
-        )
-        .await?
-    } else {
-        crate::exec::run(
-            false,
-            "tail",
-            &["-n".to_string(), lines.clamp(1, 5000).to_string(), path],
-        )
-        .await?
+    // A site that has not been hit yet has no log file. That is an empty state,
+    // not an error, so do not let `tail` fail the request.
+    if stream != LogStream::Agent && !tokio::fs::try_exists(&path).await.unwrap_or(false) {
+        return Ok(OperationResult::ok(OperationData::Lines {
+            lines: Vec::new(),
+        }));
+    }
+
+    let count = lines.clamp(1, 5000).to_string();
+
+    // Reads are executed even in dry-run: they change nothing and the panel needs
+    // real output.
+    let output = match safe_grep {
+        Some(pattern) => {
+            crate::exec::run(
+                false,
+                "sh",
+                &[
+                    "-c",
+                    // `grep` exits 1 when nothing matches, which is not an
+                    // error here: "no matching lines" is a result. The file was
+                    // already checked for existence above.
+                    &format!(
+                        "tail -n {count} {path} | grep -F -- {pattern} || true",
+                        path = crate::exec::shell_quote(&path),
+                        pattern = crate::exec::shell_quote(&pattern),
+                    ),
+                ],
+            )
+            .await?
+        }
+        None => crate::exec::run(false, "tail", &["-n".to_string(), count, path]).await?,
     };
 
-    Ok(OperationResult::ok(OperationData::Lines(
-        output.stdout.lines().map(str::to_owned).collect(),
-    )))
+    Ok(OperationResult::ok(OperationData::Lines {
+        lines: output.stdout.lines().map(str::to_owned).collect(),
+    }))
 }
 
 // ---------------------------------------------------------------------------
@@ -731,9 +719,9 @@ pub async fn clone(
         domain: request.target_domain.clone(),
         uid: target_uid,
         php_version: request.php_version,
-        database_mode: source.database_mode.clone(),
-        limits: source.limits.clone(),
-        cache: source.cache.clone(),
+        database_mode: source.database_mode,
+        limits: source.limits,
+        cache: source.cache,
         status: SiteStatus::Provisioning,
         container_id: None,
         db_name: database::db_name(&request.target_domain),
@@ -789,26 +777,39 @@ pub async fn clone(
         .step("Create database", database::create(config, &target_record))
         .await?;
 
-    // 6. Copy database.
+    // 6. Copy the database using the source site's real credentials, which only
+    //    exist in its wp-config.php.
+    let source_db = steps
+        .step(
+            "Read source database credentials",
+            wpconfig::read_db_config(config, &source),
+        )
+        .await?;
+
+    // WordPress allows `host:port`; pass the port through when there is one.
+    let src_port = match source_db.port() {
+        Some(port) => format!(" --port={}", exec::shell_quote(port)),
+        None => String::new(),
+    };
+
+    let copy = format!(
+        "mysqldump --single-transaction --quick --no-tablespaces \
+             --host={src_host}{src_port} --user={src_user} --password={src_pass} {src_name} \
+         | mysql --host={dst_host} --user={dst_user} --password={dst_pass} {dst_name}",
+        src_host = exec::shell_quote(source_db.host_only()),
+        src_user = exec::shell_quote(&source_db.user),
+        src_pass = exec::shell_quote(&source_db.password),
+        src_name = exec::shell_quote(&source_db.name),
+        dst_host = exec::shell_quote(&credentials.host),
+        dst_user = exec::shell_quote(&credentials.user),
+        dst_pass = exec::shell_quote(&credentials.password),
+        dst_name = exec::shell_quote(&credentials.name),
+    );
+
     steps
         .step(
             "Copy database",
-            exec::run(
-                config.dry_run,
-                "sh",
-                &[
-                    "-c",
-                    &format!(
-                        "mysqldump -u{} -p'{}' {} | mysql -u{} -p'{}' {}",
-                        source.db_name,
-                        "", // Source DB password (from wp-config)
-                        source.db_name,
-                        credentials.user,
-                        credentials.password,
-                        credentials.name,
-                    ),
-                ],
-            ),
+            exec::run(config.dry_run, "sh", &["-c", &copy]),
         )
         .await?;
 

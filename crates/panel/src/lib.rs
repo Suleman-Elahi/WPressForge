@@ -1,12 +1,11 @@
 //! WP Panel control plane library.
 
-#![allow(clippy::collapsible_if, clippy::clone_on_copy, dead_code)]
-
 pub mod agent;
 pub mod alerts;
 pub mod api;
 pub mod auth;
 pub mod config;
+pub mod credentials;
 pub mod csrf;
 pub mod db;
 pub mod email;
@@ -51,7 +50,6 @@ pub fn router(state: AppState, config: &Config) -> Router {
             "/login",
             get(web::pages::login_form).post(web::pages::login_submit),
         )
-        .route("/login/totp", post(web::pages::login_totp))
         .route("/logout", post(web::pages::logout))
         .route(
             "/register",

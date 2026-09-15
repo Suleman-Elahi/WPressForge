@@ -29,6 +29,16 @@
                autocomplete="off" spellcheck="false">
         <span class="hint">Install the agent with this token. It authenticates every operation.</span>
       </div>
+      <div class="field">
+        <label for="agent_fingerprint">Agent certificate fingerprint</label>
+        <input id="agent_fingerprint" name="agent_fingerprint" type="text"
+               placeholder="sha256:AB:CD:EF:..." autocomplete="off" spellcheck="false">
+        <span class="hint">
+          Required for <code>https://</code> agents. The agent prints it at startup
+          (<code>journalctl -u wp-agent | grep fingerprint</code>). The token proves the panel to
+          the agent; this pin proves the agent to the panel.
+        </span>
+      </div>
       <div class="field-row">
         <div class="field">
           <label for="ip_address">IP address</label>

@@ -3,8 +3,6 @@
 //! Serves the UI and JSON API, owns the SQLite state, and runs the job workers
 //! that drive node agents.
 
-#![allow(clippy::collapsible_if, clippy::clone_on_copy, dead_code)]
-
 use clap::Parser;
 use rand::RngCore;
 use std::time::Duration;
@@ -28,6 +26,12 @@ async fn main() -> anyhow::Result<()> {
         .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()))
         .compact()
         .init();
+
+    // See the agent's note: install the rustls provider explicitly so pinned
+    // agent connections cannot panic on a provider ambiguity.
+    if rustls::crypto::CryptoProvider::get_default().is_none() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    }
 
     let pool = db::connect(&config.database).await?;
 

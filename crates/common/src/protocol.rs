@@ -202,11 +202,7 @@ pub enum Operation {
     InspectImportSource {
         source: ImportSource,
     },
-    ImportSite {
-        site_id: i64,
-        source: ImportSource,
-        resync: bool,
-    },
+    ImportSite(ImportRequest),
 }
 
 impl Operation {
@@ -251,7 +247,7 @@ impl Operation {
             Self::InitBackupRepo { .. } => "init_backup_repo",
             Self::TailLogs { .. } => "tail_logs",
             Self::InspectImportSource { .. } => "inspect_import_source",
-            Self::ImportSite { .. } => "import_site",
+            Self::ImportSite(_) => "import_site",
         }
     }
 }
@@ -267,6 +263,25 @@ pub struct CreateSite {
     pub install_wordpress: bool,
     pub request_ssl: bool,
     pub wordpress: Option<InstallWordpress>,
+}
+
+/// Everything the agent needs to take over an existing WordPress install.
+///
+/// Carries the site definition as well as the source, because an import creates
+/// a site the agent has never seen: looking it up in the local store first is
+/// what made every import fail with "site N is not managed by this agent".
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportRequest {
+    pub site_id: i64,
+    pub domain: String,
+    pub php_version: PhpVersion,
+    pub database_mode: DatabaseMode,
+    pub limits: ResourceLimits,
+    pub cache: CacheSettings,
+    pub source: ImportSource,
+    /// Re-run against a site the agent already manages, keeping its database
+    /// and `wp-config.php` in place.
+    pub resync: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -386,6 +401,10 @@ impl OperationResult {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+// NOTE: internally tagged enums (`tag = "type"`) cannot serialise a newtype
+// variant that wraps a sequence — serde fails at runtime with "cannot serialize
+// tagged newtype variant ... containing a sequence". Every list-carrying variant
+// therefore uses a named field.
 pub enum OperationData {
     #[default]
     None,
@@ -414,18 +433,36 @@ pub enum OperationData {
     Backup {
         snapshot_id: String,
         size_bytes: u64,
+        /// Bytes attributable to site files, and to the database dump. The panel
+        /// stores both so the backups table can explain what a snapshot holds.
+        #[serde(default)]
+        files_bytes: u64,
+        #[serde(default)]
+        db_bytes: u64,
     },
-    Backups(Vec<crate::models::Backup>),
+    Backups {
+        backups: Vec<crate::models::Backup>,
+    },
     CommandOutput {
         stdout: String,
         stderr: String,
         exit_code: i32,
     },
-    Lines(Vec<String>),
-    Plugins(Vec<crate::models::PluginInfo>),
-    Themes(Vec<crate::models::ThemeInfo>),
-    WpUsers(Vec<crate::models::WpUserInfo>),
-    CronEvents(Vec<crate::models::CronEventInfo>),
+    Lines {
+        lines: Vec<String>,
+    },
+    Plugins {
+        plugins: Vec<crate::models::PluginInfo>,
+    },
+    Themes {
+        themes: Vec<crate::models::ThemeInfo>,
+    },
+    WpUsers {
+        users: Vec<crate::models::WpUserInfo>,
+    },
+    CronEvents {
+        events: Vec<crate::models::CronEventInfo>,
+    },
     CoreUpdate {
         current: String,
         latest: Option<String>,
@@ -434,7 +471,9 @@ pub enum OperationData {
         user_login: String,
         password: String,
     },
-    SiteMetrics(Vec<crate::models::SiteMetricSample>),
+    SiteMetrics {
+        samples: Vec<crate::models::SiteMetricSample>,
+    },
     ImportInspection {
         wp_version: String,
         php_version: String,
@@ -460,6 +499,183 @@ impl StepReport {
             ok: true,
             duration_ms,
             detail: None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{
+        Backup, BackupScope, CacheSettings, CronEventInfo, DatabaseMode, PluginInfo,
+        ResourceLimits, ServerMetrics, SiteMetricSample, SiteStatus, ThemeInfo, WpUserInfo,
+    };
+
+    /// Every `OperationData` variant must survive a JSON round trip.
+    ///
+    /// This exists because `#[serde(tag = "type")]` cannot serialise a newtype
+    /// variant wrapping a sequence: it compiles, then fails at runtime with
+    /// "cannot serialize tagged newtype variant ... containing a sequence".
+    /// Several list-returning operations shipped broken for exactly that reason.
+    #[test]
+    fn every_operation_data_variant_round_trips() {
+        let now = chrono::Utc::now();
+
+        let variants = vec![
+            OperationData::None,
+            OperationData::Pong {
+                agent_version: "0.1.0".into(),
+                protocol_version: crate::PROTOCOL_VERSION,
+            },
+            OperationData::Metrics(ServerMetrics::default()),
+            OperationData::SiteCreated {
+                site_id: 1,
+                container_id: "abc".into(),
+                uid: 10001,
+                db_name: "wp_example".into(),
+            },
+            OperationData::SiteStatus {
+                site_id: 1,
+                status: SiteStatus::Online,
+                php_version: crate::models::PhpVersion::Php84,
+                wp_version: Some("6.7.1".into()),
+                disk_usage_mb: 12,
+            },
+            OperationData::Certificate {
+                domains: vec!["example.com".into()],
+                expires_at: now,
+            },
+            OperationData::Backup {
+                snapshot_id: "deadbeef".into(),
+                size_bytes: 42,
+                files_bytes: 30,
+                db_bytes: 12,
+            },
+            OperationData::Backups {
+                backups: vec![Backup {
+                    id: 1,
+                    site_id: 1,
+                    snapshot_id: "deadbeef".into(),
+                    size_bytes: 42,
+                    scope: BackupScope::Full,
+                    destination: "s3".into(),
+                    created_at: now,
+                }],
+            },
+            OperationData::CommandOutput {
+                stdout: "ok".into(),
+                stderr: String::new(),
+                exit_code: 0,
+            },
+            OperationData::Lines {
+                lines: vec!["line one".into(), "line two".into()],
+            },
+            OperationData::Plugins {
+                plugins: vec![PluginInfo {
+                    name: "Akismet".into(),
+                    slug: "akismet".into(),
+                    status: "active".into(),
+                    version: "5.3".into(),
+                    update_version: None,
+                    auto_update: false,
+                }],
+            },
+            OperationData::Themes {
+                themes: vec![ThemeInfo {
+                    name: "Twenty Twenty-Five".into(),
+                    slug: "twentytwentyfive".into(),
+                    status: "active".into(),
+                    version: "1.0".into(),
+                    update_version: None,
+                }],
+            },
+            OperationData::WpUsers {
+                users: vec![WpUserInfo {
+                    id: 1,
+                    login: "admin".into(),
+                    email: "admin@example.com".into(),
+                    role: "administrator".into(),
+                }],
+            },
+            OperationData::CronEvents {
+                events: vec![CronEventInfo {
+                    hook: "wp_version_check".into(),
+                    next_run_relative: "in 4 hours".into(),
+                    schedule: "twicedaily".into(),
+                }],
+            },
+            OperationData::CoreUpdate {
+                current: "6.7.1".into(),
+                latest: Some("6.8".into()),
+            },
+            OperationData::GeneratedPassword {
+                user_login: "admin".into(),
+                password: "secret".into(),
+            },
+            OperationData::SiteMetrics {
+                samples: vec![SiteMetricSample {
+                    site_id: 1,
+                    cpu_percent: 1.5,
+                    memory_mb: 128,
+                    php_busy_workers: 2,
+                    cache_hit_ratio: Some(0.9),
+                }],
+            },
+            OperationData::ImportInspection {
+                wp_version: "6.7.1".into(),
+                php_version: "8.3".into(),
+                size_mb: 100,
+                db_name: Some("wp".into()),
+                db_user: Some("wp".into()),
+            },
+        ];
+
+        for variant in variants {
+            let json = serde_json::to_string(&variant)
+                .unwrap_or_else(|e| panic!("serialising {variant:?} failed: {e}"));
+            let back: OperationData = serde_json::from_str(&json)
+                .unwrap_or_else(|e| panic!("deserialising {json} failed: {e}"));
+            assert_eq!(
+                std::mem::discriminant(&variant),
+                std::mem::discriminant(&back),
+                "variant changed across the round trip: {json}"
+            );
+        }
+    }
+
+    /// The same guarantee for the request side.
+    #[test]
+    fn representative_operations_round_trip() {
+        let operations = vec![
+            Operation::Ping,
+            Operation::GetServerMetrics,
+            Operation::CreateSite(CreateSite {
+                site_id: 1,
+                domain: "example.com".into(),
+                php_version: crate::models::PhpVersion::Php84,
+                database_mode: DatabaseMode::Shared,
+                limits: ResourceLimits::default(),
+                cache: CacheSettings::default(),
+                install_wordpress: true,
+                request_ssl: true,
+                wordpress: None,
+            }),
+            Operation::TailLogs {
+                site_id: 1,
+                stream: LogStream::NginxError,
+                lines: 100,
+                grep: Some("php".into()),
+            },
+            Operation::WpCli {
+                site_id: 1,
+                args: vec!["plugin".into(), "list".into()],
+            },
+        ];
+
+        for operation in operations {
+            let json = serde_json::to_string(&operation).expect("serialise operation");
+            let back: Operation = serde_json::from_str(&json).expect("deserialise operation");
+            assert_eq!(operation.name(), back.name(), "operation changed: {json}");
         }
     }
 }

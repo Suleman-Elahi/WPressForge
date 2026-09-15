@@ -6,7 +6,7 @@ use crate::state::AppState;
 use askama::Template;
 use axum::Form;
 use axum::extract::{Path, Query, State};
-use axum::response::{Html, IntoResponse, Response};
+use axum::response::Response;
 use serde::Deserialize;
 use serde_json::json;
 use wp_common::models::{
@@ -445,36 +445,94 @@ pub async fn restore_backup(
 /// Sync backups from the agent's restic repository.
 pub async fn sync_backups(
     State(state): State<AppState>,
-    _user: CurrentUser,
+    user: CurrentUser,
+    _session: CurrentSession,
     Path(id): Path<i64>,
 ) -> AppResult<Response> {
-    let site = db::sites::get_for_user(&state.db, id, _user.0.id, &_user.0.role)
+    require_operator_or_above(&user)?;
+    let site = db::sites::get_for_user(&state.db, id, user.0.id, &user.0.role)
         .await?
         .ok_or(AppError::NotFound)?;
     let server = db::servers::get(&state.db, site.site.server_id)
         .await?
         .ok_or(AppError::NotFound)?;
 
-    // For now, just trigger a list and record the result.
-    // A full implementation would decrypt the destination and pass a ResticTarget.
-    let _ = state
+    // Without a destination there is no repository to read, so say so instead of
+    // reporting a successful sync (which is what an earlier stub did).
+    let Some((destination, target)) =
+        db::destinations::for_site(&state.db, &state.secrets, id).await?
+    else {
+        return Ok(redirect_with_flash(
+            &format!("/sites/{id}?tab=backups"),
+            "No backup destination is configured for this site.",
+        ));
+    };
+
+    let result = state
         .agent
         .query(
             &server.connection(),
             wp_common::protocol::Operation::ListBackups {
                 site_id: id,
-                target: wp_common::protocol::ResticTarget {
-                    repo: String::new(),
-                    password: String::new(),
-                    env: Vec::new(),
-                },
+                target,
             },
         )
         .await;
 
+    let flash = match result {
+        Ok(wp_common::protocol::OperationData::Backups { backups }) => {
+            let found = backups.len();
+            for backup in backups {
+                db::sites::upsert_backup_at(
+                    &state.db,
+                    id,
+                    &db::sites::NewBackup {
+                        snapshot_id: backup.snapshot_id,
+                        scope: backup.scope,
+                        size_bytes: backup.size_bytes,
+                        files_bytes: 0,
+                        db_bytes: 0,
+                        restic_repo: Some(destination.name.clone()),
+                    },
+                    backup.created_at,
+                )
+                .await?;
+            }
+
+            db::audit::record(
+                &state.db,
+                &user.0.email,
+                "backup.sync",
+                &site.site.domain,
+                Some(&format!("{found} snapshots from {}", destination.name)),
+                true,
+            )
+            .await?;
+
+            match found {
+                0 => "No snapshots found in the repository for this site.".to_string(),
+                1 => "Synced 1 snapshot from the node.".to_string(),
+                n => format!("Synced {n} snapshots from the node."),
+            }
+        }
+        Ok(_) => "Unexpected response from the agent.".to_string(),
+        Err(error) => {
+            db::audit::record(
+                &state.db,
+                &user.0.email,
+                "backup.sync",
+                &site.site.domain,
+                Some(&error.to_string()),
+                false,
+            )
+            .await?;
+            format!("Could not read the repository: {error}")
+        }
+    };
+
     Ok(redirect_with_flash(
-        &format!("/sites/{id}"),
-        "Synced backups from node",
+        &format!("/sites/{id}?tab=backups"),
+        &flash,
     ))
 }
 
@@ -492,7 +550,10 @@ struct ClonePage {
 #[derive(Deserialize)]
 pub struct CloneForm {
     pub target_domain: String,
-    pub request_ssl: bool,
+    /// HTML checkboxes submit `on` or are omitted entirely, so this cannot be a
+    /// `bool`: serde would reject both cases with 422.
+    #[serde(default)]
+    pub request_ssl: Option<String>,
 }
 
 /// Show the clone form for a site.
@@ -550,9 +611,9 @@ pub async fn clone_create(
             database_mode: source.site.database_mode,
             environment: source.site.environment,
             parent_site_id: Some(source.site.id),
-            limits: source.site.limits.clone(),
-            cache: source.site.cache.clone(),
-            request_ssl: form.request_ssl,
+            limits: source.site.limits,
+            cache: source.site.cache,
+            request_ssl: checked(&form.request_ssl),
         },
     )
     .await?;
@@ -571,7 +632,7 @@ pub async fn clone_create(
             "source_domain": source.site.domain,
             "target_site_id": target_id,
             "target_domain": form.target_domain,
-            "request_ssl": form.request_ssl,
+            "request_ssl": checked(&form.request_ssl),
         })),
         &user.0.email,
     )
@@ -626,8 +687,8 @@ pub async fn staging_create(
             database_mode: source.site.database_mode,
             environment: wp_common::models::Environment::Staging,
             parent_site_id: Some(source.site.id),
-            limits: source.site.limits.clone(),
-            cache: source.site.cache.clone(),
+            limits: source.site.limits,
+            cache: source.site.cache,
             request_ssl: false, // No TLS for staging by default.
         },
     )
@@ -1015,7 +1076,7 @@ pub async fn plugins_fragment(
         )
         .await;
     let (plugins, error) = match result {
-        Ok(wp_common::protocol::OperationData::Plugins(list)) => (list, None),
+        Ok(wp_common::protocol::OperationData::Plugins { plugins: list }) => (list, None),
         Ok(_) => (vec![], Some("unexpected agent response".into())),
         Err(e) => (vec![], Some(e.to_string())),
     };
@@ -1108,7 +1169,7 @@ pub async fn themes_fragment(
         )
         .await;
     let (themes, error) = match result {
-        Ok(wp_common::protocol::OperationData::Themes(list)) => (list, None),
+        Ok(wp_common::protocol::OperationData::Themes { themes: list }) => (list, None),
         Ok(_) => (vec![], Some("unexpected agent response".into())),
         Err(e) => (vec![], Some(e.to_string())),
     };
@@ -1200,7 +1261,7 @@ pub async fn wpusers_fragment(
         )
         .await;
     let (users, error) = match result {
-        Ok(wp_common::protocol::OperationData::WpUsers(list)) => (list, None),
+        Ok(wp_common::protocol::OperationData::WpUsers { users: list }) => (list, None),
         Ok(_) => (vec![], Some("unexpected agent response".into())),
         Err(e) => (vec![], Some(e.to_string())),
     };
@@ -1284,7 +1345,7 @@ pub async fn cron_fragment(
         )
         .await;
     let (events, error) = match result {
-        Ok(wp_common::protocol::OperationData::CronEvents(list)) => (list, None),
+        Ok(wp_common::protocol::OperationData::CronEvents { events: list }) => (list, None),
         Ok(_) => (vec![], Some("unexpected agent response".into())),
         Err(e) => (vec![], Some(e.to_string())),
     };
@@ -1538,6 +1599,7 @@ pub async fn logs_fragment(
     };
     let lines = query.lines.unwrap_or(200).min(2000);
     let grep = query.grep.filter(|g| !g.is_empty() && g.len() <= 64);
+    let filter = grep.clone();
 
     let result = state
         .agent
@@ -1552,19 +1614,30 @@ pub async fn logs_fragment(
         )
         .await;
 
-    let content = match result {
-        Ok(wp_common::protocol::OperationData::Lines(lines)) => lines.join("\n"),
-        Ok(_) => String::new(),
-        Err(e) => format!("Error fetching logs: {e}"),
+    let (content, error) = match result {
+        Ok(wp_common::protocol::OperationData::Lines { lines }) => (lines.join("\n"), None),
+        Ok(_) => (String::new(), Some("unexpected agent response".to_string())),
+        Err(e) => (String::new(), Some(e.to_string())),
     };
 
-    // Escape HTML entities in log content.
-    let escaped = content
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;");
+    // Rendered through a template so Askama does the escaping: log lines are the
+    // most attacker-influenced text in the panel.
+    Ok(super::no_store(render(LogsFragment {
+        content,
+        error,
+        stream: stream_name,
+        filter,
+    })))
+}
 
-    Ok(Html(format!("<pre class=\"log\">{escaped}</pre>")).into_response())
+#[derive(Template)]
+#[template(path = "sites/logs.html")]
+struct LogsFragment {
+    content: String,
+    error: Option<String>,
+    stream: String,
+    /// The active filter, so an empty result can say which case it is.
+    filter: Option<String>,
 }
 
 // ---------------------------------------------------------------------------

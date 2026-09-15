@@ -12,8 +12,7 @@ use wp_common::Result;
 
 /// Content of the must-use plugin. Pure function — unit testable, no I/O.
 pub fn mu_plugin_php(_domain: &str) -> String {
-    format!(
-        r#"<?php
+    r#"<?php
 /**
  * Plugin Name: WP Panel Cache
  * Description: Automatically purges the Nginx FastCGI cache when content changes.
@@ -25,25 +24,25 @@ pub fn mu_plugin_php(_domain: &str) -> String {
  * via the /wp-panel-purge location (requires ngx_cache_purge module).
  */
 
-if (!defined('ABSPATH')) {{
+if (!defined('ABSPATH')) {
     exit;
-}}
+}
 
 /**
  * Purge a single URL from the Nginx FastCGI cache.
  *
  * @param string $url The full URL to purge.
  */
-function wp_panel_purge_url($url) {{
+function wp_panel_purge_url($url) {
     $path = wp_parse_url($url, PHP_URL_PATH);
-    if (empty($path)) {{
+    if (empty($path)) {
         return;
-    }}
+    }
 
     $host = wp_parse_url($url, PHP_URL_HOST);
-    if (empty($host)) {{
+    if (empty($host)) {
         return;
-    }}
+    }
 
     $purge_url = 'http://127.0.0.1/wp-panel-purge' . $path;
 
@@ -55,76 +54,76 @@ function wp_panel_purge_url($url) {{
     );
 
     wp_remote_get($purge_url, $args);
-}}
+}
 
 /**
  * Purge a post and its related URLs (archives, feeds, home page).
  *
  * @param int $post_id The post ID.
  */
-function wp_panel_purge_post($post_id) {{
+function wp_panel_purge_post($post_id) {
     // Skip revisions and auto-drafts.
-    if (wp_is_post_revision($post_id) || wp_is_post_autosave($post_id)) {{
+    if (wp_is_post_revision($post_id) || wp_is_post_autosave($post_id)) {
         return;
-    }}
+    }
 
     $post = get_post($post_id);
-    if (!$post || $post->post_status !== 'publish') {{
+    if (!$post || $post->post_status !== 'publish') {
         return;
-    }}
+    }
 
     $home_url = home_url('/');
     wp_panel_purge_url($home_url);
 
     // Permalink of the post.
     $permalink = get_permalink($post_id);
-    if ($permalink) {{
+    if ($permalink) {
         wp_panel_purge_url($permalink);
-    }}
+    }
 
     // Post type archives.
     $post_type = get_post_type($post_id);
     $archive_url = get_post_type_archive_link($post_type);
-    if ($archive_url) {{
+    if ($archive_url) {
         wp_panel_purge_url($archive_url);
-    }}
+    }
 
     // Category and tag archives.
     $categories = get_the_category($post_id);
-    if (!is_wp_error($categories)) {{
-        foreach ($categories as $cat) {{
+    if (!is_wp_error($categories)) {
+        foreach ($categories as $cat) {
             $cat_url = get_category_link($cat->term_id);
-            if ($cat_url) {{
+            if ($cat_url) {
                 wp_panel_purge_url($cat_url);
-            }}
-        }}
-    }}
+            }
+        }
+    }
 
     $tags = get_the_tags($post_id);
-    if ($tags) {{
-        foreach ($tags as $tag) {{
+    if ($tags) {
+        foreach ($tags as $tag) {
             $tag_url = get_tag_link($tag->term_id);
-            if ($tag_url) {{
+            if ($tag_url) {
                 wp_panel_purge_url($tag_url);
-            }}
-        }}
-    }}
+            }
+        }
+    }
 
     // Feed URLs.
     $feed_url = get_post_comments_feed_link($post_id);
-    if ($feed_url) {{
+    if ($feed_url) {
         wp_panel_purge_url($feed_url);
-    }}
+    }
 
     // REST and sitemap entries.
     $rest_url = rest_url('wp/v2/posts/' . $post_id);
-    if ($rest_url) {{
+    if ($rest_url) {
         wp_panel_purge_url($rest_url);
-    }}
+    }
 
     $sitemap_url = home_url('/wp-sitemap.xml');
     wp_panel_purge_url($sitemap_url);
-}}
+}
 
 /**
  * Purge all term-related URLs when a term is edited.
@@ -132,51 +131,51 @@ function wp_panel_purge_post($post_id) {{
  * @param int $term_id The term ID.
  * @param string $taxonomy The taxonomy slug.
  */
-function wp_panel_purge_term($term_id, $taxonomy) {{
+function wp_panel_purge_term($term_id, $taxonomy) {
     $term_url = get_term_link($term_id, $taxonomy);
-    if (!is_wp_error($term_url)) {{
+    if (!is_wp_error($term_url)) {
         wp_panel_purge_url($term_url);
-    }}
+    }
 
     $home_url = home_url('/');
     wp_panel_purge_url($home_url);
 
     $sitemap_url = home_url('/wp-sitemap.xml');
     wp_panel_purge_url($sitemap_url);
-}}
+}
 
 /**
  * Purge the home page on theme switch.
  */
-function wp_panel_purge_theme_switch() {{
+function wp_panel_purge_theme_switch() {
     $home_url = home_url('/');
     wp_panel_purge_url($home_url);
 
     $sitemap_url = home_url('/wp-sitemap.xml');
     wp_panel_purge_url($sitemap_url);
-}}
+}
 
 // --- Hooks ----------------------------------------------------------------
 
 // Post operations.
 add_action('save_post', 'wp_panel_purge_post', 20, 3);
-add_action('delete_post', function ($post_id) {{
+add_action('delete_post', function ($post_id) {
     wp_panel_purge_post($post_id);
-}});
+});
 
 // Comment operations — purge the parent post.
-add_action('comment_post', function ($comment_id, $comment_approved, $commentdata) {{
-    if (!empty($commentdata['comment_post_ID'])) {{
+add_action('comment_post', function ($comment_id, $comment_approved, $commentdata) {
+    if (!empty($commentdata['comment_post_ID'])) {
         wp_panel_purge_post($commentdata['comment_post_ID']);
-    }}
-}}, 20, 3);
+    }
+}, 20, 3);
 
-add_action('wp_set_comment_status', function ($comment_id, $status) {{
+add_action('wp_set_comment_status', function ($comment_id, $status) {
     $comment = get_comment($comment_id);
-    if ($comment && !empty($comment->comment_post_ID)) {{
+    if ($comment && !empty($comment->comment_post_ID)) {
         wp_panel_purge_post($comment->comment_post_ID);
-    }}
-}}, 20, 2);
+    }
+}, 20, 2);
 
 // Term operations.
 add_action('edited_term', 'wp_panel_purge_term', 20, 2);
@@ -186,7 +185,7 @@ add_action('delete_term', 'wp_panel_purge_term', 20, 2);
 // Theme switch.
 add_action('switch_theme', 'wp_panel_purge_theme_switch');
 "#
-    )
+    .to_string()
 }
 
 /// Write the mu-plugin to the site's `wp-content/mu-plugins/` directory.

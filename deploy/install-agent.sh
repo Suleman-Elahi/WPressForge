@@ -92,6 +92,17 @@ echo "NOTE: expose ${WP_AGENT_BIND} only to the panel (private network or 'ufw a
 
 systemctl --no-pager status wp-agent | head -n 5
 
+echo "==> agent TLS certificate fingerprint"
+# The panel pins this value; without it an https agent cannot be attached.
+if [[ -f /var/lib/wp-agent/agent.crt ]]; then
+  fp=$(openssl x509 -in /var/lib/wp-agent/agent.crt -noout -fingerprint -sha256 |
+       sed 's/.*=//')
+  echo "  sha256:${fp}"
+  echo "  ^ paste this into the panel's \"Agent certificate fingerprint\" field"
+else
+  echo "  not generated yet; run: journalctl -u wp-agent | grep fingerprint"
+fi
+
 echo "==> detected web server capabilities"
 # The agent logs the same probe at startup; print it here so the operator knows
 # what the generated vhosts will contain.

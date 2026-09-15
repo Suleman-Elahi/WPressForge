@@ -52,19 +52,19 @@ pub async fn send_email(config: &Config, msg: &EmailMessage) -> Result<(), Strin
     read_multiline_reply(&mut reader, &mut line, 250).await?;
 
     // 3. Optional AUTH LOGIN
-    if let (Some(user), Some(pass)) = (&config.smtp_user, &config.smtp_password) {
-        if !user.is_empty() {
-            write_line(&mut reader, "AUTH LOGIN").await?;
-            read_reply(&mut reader, &mut line, 334).await?;
+    if let (Some(user), Some(pass)) = (&config.smtp_user, &config.smtp_password)
+        && !user.is_empty()
+    {
+        write_line(&mut reader, "AUTH LOGIN").await?;
+        read_reply(&mut reader, &mut line, 334).await?;
 
-            let user_b64 = BASE64.encode(user.as_bytes());
-            write_line(&mut reader, &user_b64).await?;
-            read_reply(&mut reader, &mut line, 334).await?;
+        let user_b64 = BASE64.encode(user.as_bytes());
+        write_line(&mut reader, &user_b64).await?;
+        read_reply(&mut reader, &mut line, 334).await?;
 
-            let pass_b64 = BASE64.encode(pass.as_bytes());
-            write_line(&mut reader, &pass_b64).await?;
-            read_reply(&mut reader, &mut line, 235).await?;
-        }
+        let pass_b64 = BASE64.encode(pass.as_bytes());
+        write_line(&mut reader, &pass_b64).await?;
+        read_reply(&mut reader, &mut line, 235).await?;
     }
 
     // 4. MAIL FROM

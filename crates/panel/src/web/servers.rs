@@ -123,6 +123,10 @@ pub struct NewServerForm {
     pub provider: String,
     #[serde(default)]
     pub region: String,
+    /// SHA-256 fingerprint of the agent's TLS certificate, printed by the agent
+    /// at startup. Required for any `https://` agent URL.
+    #[serde(default)]
+    pub agent_fingerprint: String,
 }
 
 pub async fn create(
@@ -134,9 +138,33 @@ pub async fn create(
     if name.is_empty() {
         return Err(AppError::BadRequest("server name is required".into()));
     }
-    if !form.agent_url.starts_with("http") {
+    let agent_url = form.agent_url.trim();
+    if !agent_url.starts_with("http") {
         return Err(AppError::BadRequest(
             "agent URL must start with http:// or https://".into(),
+        ));
+    }
+
+    let fingerprint = normalise_fingerprint(form.agent_fingerprint.trim())?;
+
+    // The token authenticates the panel to the agent; the pin authenticates the
+    // agent to the panel. Without it an HTTPS agent cannot be verified at all,
+    // so refuse at the form instead of storing a server that can never connect.
+    if agent_url.starts_with("https:") && fingerprint.is_none() {
+        return Err(AppError::BadRequest(
+            "pin the agent certificate first: paste the sha256 fingerprint the \
+             agent prints at startup"
+                .into(),
+        ));
+    }
+
+    // Plain HTTP is only acceptable on loopback, where there is no network to
+    // intercept.
+    if agent_url.starts_with("http:") && !is_loopback_url(agent_url) {
+        return Err(AppError::BadRequest(
+            "plain http:// is only allowed for 127.0.0.1 or [::1]; use https:// \
+             with a pinned fingerprint"
+                .into(),
         ));
     }
 
@@ -150,7 +178,7 @@ pub async fn create(
             ip_address: form.ip_address.trim(),
             provider: Some(form.provider.trim()).filter(|s| !s.is_empty()),
             region: Some(form.region.trim()).filter(|s| !s.is_empty()),
-            agent_fingerprint: None,
+            agent_fingerprint: fingerprint.as_deref(),
         },
     )
     .await?;
@@ -170,9 +198,9 @@ pub async fn create(
     let flash = match state
         .agent
         .ping(&crate::agent::ServerConnection {
-            url: form.agent_url.trim().to_owned(),
+            url: agent_url.to_owned(),
             token: form.agent_token.trim().to_owned(),
-            fingerprint: None,
+            fingerprint: fingerprint.clone(),
         })
         .await
     {
@@ -309,4 +337,81 @@ impl Spark {
 
 pub fn spark_from_values(values: &[f32]) -> Spark {
     Spark::from_values(values, 120.0, 28.0)
+}
+
+/// Accepts `sha256:AB:CD:...`, `AB:CD:...` or bare hex, and normalises to the
+/// `sha256:AA:BB:...` form the verifier expects. Empty input means "no pin".
+fn normalise_fingerprint(raw: &str) -> Result<Option<String>, AppError> {
+    if raw.is_empty() {
+        return Ok(None);
+    }
+
+    let hex: String = raw
+        .trim()
+        .trim_start_matches("sha256:")
+        .trim_start_matches("SHA256:")
+        .chars()
+        .filter(|c| !matches!(c, ':' | ' ' | '-'))
+        .collect();
+
+    if hex.len() != 64 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(AppError::BadRequest(
+            "fingerprint must be 64 hex characters (a SHA-256 digest)".into(),
+        ));
+    }
+
+    let grouped: Vec<String> = hex
+        .to_uppercase()
+        .as_bytes()
+        .chunks(2)
+        .map(|pair| String::from_utf8_lossy(pair).into_owned())
+        .collect();
+
+    Ok(Some(format!("sha256:{}", grouped.join(":"))))
+}
+
+/// True for URLs whose host is a loopback address.
+fn is_loopback_url(url: &str) -> bool {
+    let rest = url
+        .trim_start_matches("http://")
+        .trim_start_matches("https://");
+    let host = rest.split(['/', '?']).next().unwrap_or("");
+    let host = host.rsplit_once(':').map(|(h, _)| h).unwrap_or(host);
+    matches!(host, "127.0.0.1" | "localhost" | "[::1]" | "::1") || host.starts_with("127.")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalises_fingerprint_spellings() {
+        let hex = "68eeb67fd7d8afc4a5c1884737f26f0322a7c394562ef01596e70145ddc3c2a5";
+        let expected = normalise_fingerprint(hex).unwrap().unwrap();
+
+        assert!(expected.starts_with("sha256:68:EE:B6:"));
+        assert_eq!(normalise_fingerprint(&expected).unwrap().unwrap(), expected);
+        assert_eq!(
+            normalise_fingerprint(&format!("SHA256:{hex}"))
+                .unwrap()
+                .unwrap(),
+            expected
+        );
+        assert_eq!(normalise_fingerprint("").unwrap(), None);
+    }
+
+    #[test]
+    fn rejects_malformed_fingerprints() {
+        assert!(normalise_fingerprint("abc").is_err());
+        assert!(normalise_fingerprint(&"z".repeat(64)).is_err());
+    }
+
+    #[test]
+    fn recognises_loopback_urls() {
+        assert!(is_loopback_url("http://127.0.0.1:8443"));
+        assert!(is_loopback_url("http://localhost:8443/v1"));
+        assert!(is_loopback_url("http://[::1]:8443"));
+        assert!(!is_loopback_url("http://10.0.0.9:8443"));
+        assert!(!is_loopback_url("http://example.com"));
+    }
 }

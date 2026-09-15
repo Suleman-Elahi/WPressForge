@@ -201,10 +201,9 @@ pub fn render_vhost(
         // omitted: it may appear only once per address:port, and every site
         // gets its own server block.
         let quic_lines = if caps.http3 {
-            format!(
-                "    listen 443 quic;\n    listen [::]:443 quic;\n    \
+            "    listen 443 quic;\n    listen [::]:443 quic;\n    \
                  http3 on;\n    add_header Alt-Svc 'h3=\":443\"; ma=86400' always;\n"
-            )
+                .to_string()
         } else {
             String::new()
         };

@@ -108,18 +108,28 @@ keyboard focus styles, and `prefers-reduced-motion` respected.
 
 ## Status
 
-All planned milestones (M0 through M7), testing foundation (X1), operational runbooks (`docs/OPERATIONS.md`), and wire protocol catalog (`docs/PROTOCOL.md`) are implemented, passing tests, and verified.
+All planned milestones are implemented and verified: authentication with CSRF,
+TLS-pinned agents, API tokens, login throttling and TOTP 2FA; sites with
+per-site tabs, domains, cache and resource limits; WordPress management
+(plugins, themes, users, cron, a constrained WP-CLI console); encrypted backups
+to S3-compatible destinations with schedules, retention and restore; cloning,
+staging and staging push; log viewing, metrics history with inline sparklines and
+alerting; importing existing sites over SSH; teams with roles and per-site
+grants; and a JSON API scoped to the caller.
 
-- **Security (M1):** Per-session CSRF protection, TLS fingerprint pinning, API tokens, sliding-window login rate limiting, and RFC 6238 TOTP 2FA.
-- **WordPress Management (M2):** Live inspection and actions for plugins, themes, users, WP cron, and WP-CLI command runner.
-- **Backups & Restoration (M3):** Encrypted offsite S3/MinIO destination credentials (AES-256-GCM), Restic snapshots, per-site backup schedule UI, and one-click restores.
-- **Cloning & Staging (M4):** Automated site replication, staging environment isolation with safety backups, and production push pipeline.
-- **Observability (M5):** Pure inline SVG sparklines for host and container telemetry, 30s auto-polling, log streaming, and threshold alerts.
-- **Site Migration (M6):** Multi-step import wizard with SSH compatibility probes, rsync file migration, and automated DB search & replace.
-- **Multi-Tenancy & Teams (M7):** Role-based access control (`owner`, `admin`, `operator`, `viewer`), granular per-site user assignments, invitation tokens, and async RFC 5321 SMTP outbound email.
-- **Documentation & CI (X1):** Full operational disaster recovery guides, wire protocol documentation, and GitHub Actions CI suite.
+Quality gates: `cargo fmt --check`, `clippy -D warnings` with no suppressions,
+and 97 tests spanning unit, repository, HTTP-handler and real-`nginx -t` layers.
 
-Detailed architecture and milestone specifications are documented in [`docs/IMPLEMENTATION-PLAN.md`](./docs/IMPLEMENTATION-PLAN.md).
+Node operations have so far been exercised with `WP_AGENT_DRY_RUN=true`
+(every command logged, nothing executed) plus real Nginx config validation. The
+first run against live Docker, MariaDB and certbot still needs a shakedown, and
+the full import path needs two hosts to prove end to end.
+
+Current state, the defect history behind it, and the remaining items are tracked
+in [`status`](./status); the engineering plan and conventions are in
+[`docs/IMPLEMENTATION-PLAN.md`](./docs/IMPLEMENTATION-PLAN.md), with operational
+runbooks in [`docs/OPERATIONS.md`](./docs/OPERATIONS.md) and the wire protocol in
+[`docs/PROTOCOL.md`](./docs/PROTOCOL.md).
 
 ## License
 

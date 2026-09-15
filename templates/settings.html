@@ -164,6 +164,11 @@
         </dd>
         <dt>From</dt>
         <dd>
+          {% match smtp_user %}
+            {% when Some with (user) %}
+              <dt>SMTP user</dt><dd class="mono">{{ user }}</dd>
+            {% when None %}
+          {% endmatch %}
           {% match smtp_from %}
             {% when Some with (from) %}
               {{ from }}

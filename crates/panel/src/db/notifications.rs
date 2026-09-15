@@ -74,3 +74,56 @@ pub async fn resolve(db: &SqlitePool, id: i64) -> sqlx::Result<()> {
         .await?;
     Ok(())
 }
+
+/// Opens a notification for `(rule, target)` unless one is already open.
+///
+/// Alert evaluation runs every minute, so this must be idempotent: a condition
+/// that keeps firing produces one row, not sixty an hour.
+pub async fn open_if_absent(
+    db: &SqlitePool,
+    rule: &str,
+    severity: &str,
+    target: &str,
+    message: &str,
+) -> sqlx::Result<bool> {
+    let existing: Option<i64> = sqlx::query_scalar(
+        "SELECT id FROM notifications WHERE rule = ?1 AND target = ?2 AND resolved_at IS NULL LIMIT 1",
+    )
+    .bind(rule)
+    .bind(target)
+    .fetch_optional(db)
+    .await?;
+
+    if existing.is_some() {
+        return Ok(false);
+    }
+
+    sqlx::query(
+        "INSERT INTO notifications (severity, rule, target, message, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+    )
+    .bind(severity)
+    .bind(rule)
+    .bind(target)
+    .bind(message)
+    .bind(super::now_string())
+    .execute(db)
+    .await?;
+
+    Ok(true)
+}
+
+/// Resolves every open notification for `(rule, target)`.
+pub async fn resolve_rule(db: &SqlitePool, rule: &str, target: &str) -> sqlx::Result<u64> {
+    let result = sqlx::query(
+        "UPDATE notifications SET resolved_at = ?3
+         WHERE rule = ?1 AND target = ?2 AND resolved_at IS NULL",
+    )
+    .bind(rule)
+    .bind(target)
+    .bind(super::now_string())
+    .execute(db)
+    .await?;
+
+    Ok(result.rows_affected())
+}

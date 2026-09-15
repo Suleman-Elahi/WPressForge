@@ -26,6 +26,13 @@ pub fn has_global_access(role: &str) -> bool {
     matches!(role, "owner" | "admin")
 }
 
+/// Returns true if the role may perform state-changing requests at all.
+/// `viewer` is read-only; every other known role may act, subject to per-site
+/// grants.
+pub fn can_mutate(role: &str) -> bool {
+    role_level(role) <= role_level("operator")
+}
+
 /// Returns true if `actor_role` can modify users at `target_role` level.
 pub fn can_manage(actor_role: &str, target_role: &str) -> bool {
     role_level(actor_role) < role_level(target_role)

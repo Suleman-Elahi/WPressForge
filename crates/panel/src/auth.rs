@@ -55,13 +55,14 @@ pub struct LoginOutcome {
     pub user: User,
 }
 
-pub async fn login(
+/// Verifies email + password without creating a session. Separated from
+/// [`start_session`] so a 2FA challenge can be issued between the two: an
+/// earlier version created the session before the second factor was checked.
+pub async fn verify_credentials(
     state: &AppState,
     email: &str,
     password: &str,
-    user_agent: &str,
-    ip: &str,
-) -> anyhow::Result<Option<LoginOutcome>> {
+) -> anyhow::Result<Option<User>> {
     let Some(user) = users::by_email(&state.db, email.trim()).await? else {
         // Constant-ish work on unknown accounts to avoid a trivial oracle.
         let _ = verify_password(
@@ -75,6 +76,16 @@ pub async fn login(
         return Ok(None);
     }
 
+    Ok(Some(user))
+}
+
+/// Issues a session for an already authenticated user.
+pub async fn start_session(
+    state: &AppState,
+    user: &User,
+    user_agent: &str,
+    ip: &str,
+) -> anyhow::Result<String> {
     let token = random_token();
     users::create_session(
         &state.db,
@@ -86,7 +97,22 @@ pub async fn login(
     )
     .await?;
     users::touch_login(&state.db, user.id).await?;
+    Ok(token)
+}
 
+/// Password login for accounts without 2FA: verify, then open a session.
+pub async fn login(
+    state: &AppState,
+    email: &str,
+    password: &str,
+    user_agent: &str,
+    ip: &str,
+) -> anyhow::Result<Option<LoginOutcome>> {
+    let Some(user) = verify_credentials(state, email, password).await? else {
+        return Ok(None);
+    };
+
+    let token = start_session(state, &user, user_agent, ip).await?;
     Ok(Some(LoginOutcome { token, user }))
 }
 
@@ -212,6 +238,33 @@ pub async fn require_session(
                 }
             }
 
+            // A viewer is read-only, enforced here rather than only in each
+            // handler: extractors run before handler bodies, so a viewer posting
+            // a form that fails validation used to get 422 from the extractor
+            // and never reach the role check. Handlers keep their own
+            // `require_operator_or_above` as defence in depth.
+            if !request.method().is_safe() && !crate::db::teams::can_mutate(&user.role) {
+                tracing::warn!(
+                    path = %request.uri().path(),
+                    role = %user.role,
+                    "read-only role attempted a mutation"
+                );
+                let _ = crate::db::audit::record(
+                    &state.db,
+                    &user.email,
+                    "auth.role_reject",
+                    request.uri().path(),
+                    Some(&user.role),
+                    false,
+                )
+                .await;
+                return (
+                    StatusCode::FORBIDDEN,
+                    crate::web::render_error(StatusCode::FORBIDDEN, "Your role is read-only."),
+                )
+                    .into_response();
+            }
+
             request
                 .extensions_mut()
                 .insert(CurrentSession(token.unwrap_or_default()));
@@ -238,11 +291,11 @@ pub async fn require_api_auth(
     mut request: Request,
     next: Next,
 ) -> Response {
-    if let Some(token) = cookie_value(&request, COOKIE_NAME) {
-        if let Ok(Some(user)) = users::user_for_session(&state.db, &token).await {
-            request.extensions_mut().insert(CurrentUser(user));
-            return next.run(request).await;
-        }
+    if let Some(token) = cookie_value(&request, COOKIE_NAME)
+        && let Ok(Some(user)) = users::user_for_session(&state.db, &token).await
+    {
+        request.extensions_mut().insert(CurrentUser(user));
+        return next.run(request).await;
     }
 
     let bearer = request

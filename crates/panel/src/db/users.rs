@@ -134,14 +134,26 @@ pub async fn create_session(
     Ok(())
 }
 
+/// `COLUMNS` with every field qualified by a table alias, so the session query
+/// cannot drift away from the single-table queries. It did once: the alias list
+/// was hand-written and omitted `totp_secret`, which silently disabled 2FA
+/// enrolment because `map_row` tolerates missing columns.
+fn aliased_columns(alias: &str) -> String {
+    COLUMNS
+        .split(", ")
+        .map(|column| format!("{alias}.{column}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// Resolves a session cookie to a user, ignoring expired rows.
 pub async fn user_for_session(db: &Db, token: &str) -> sqlx::Result<Option<User>> {
-    let row = sqlx::query(
-        "SELECT u.id, u.email, u.name, u.password_hash, u.role, u.created_at, u.last_login_at
-         FROM users u
+    let row = sqlx::query(AssertSqlSafe(format!(
+        "SELECT {} FROM users u
          JOIN sessions s ON s.user_id = u.id
          WHERE s.token = ?1 AND s.expires_at > ?2",
-    )
+        aliased_columns("u")
+    )))
     .bind(token)
     .bind(super::now_string())
     .fetch_optional(db)
@@ -193,4 +205,29 @@ pub async fn disable_totp(db: &Db, user_id: i64) -> sqlx::Result<()> {
         .execute(db)
         .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn aliased_columns_cover_every_mapped_field() {
+        let aliased = aliased_columns("u");
+
+        assert_eq!(
+            aliased.split(", ").count(),
+            COLUMNS.split(", ").count(),
+            "the aliased list must have the same arity as COLUMNS"
+        );
+
+        // These two are the ones whose absence silently broke 2FA: `map_row`
+        // treats a missing column as NULL, so only a test can catch it.
+        for required in ["u.totp_secret", "u.totp_confirmed_at", "u.role", "u.id"] {
+            assert!(
+                aliased.split(", ").any(|c| c == required),
+                "session query must select {required}"
+            );
+        }
+    }
 }

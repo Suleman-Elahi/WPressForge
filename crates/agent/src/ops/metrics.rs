@@ -73,10 +73,10 @@ async fn memory() -> (f32, u64) {
 
     let mut values: BTreeMap<&str, u64> = BTreeMap::new();
     for line in raw.lines() {
-        if let Some((key, rest)) = line.split_once(':') {
-            if let Some(kb) = rest.split_whitespace().next().and_then(|v| v.parse().ok()) {
-                values.insert(key, kb);
-            }
+        if let Some((key, rest)) = line.split_once(':')
+            && let Some(kb) = rest.split_whitespace().next().and_then(|v| v.parse().ok())
+        {
+            values.insert(key, kb);
         }
     }
 

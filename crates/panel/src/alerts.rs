@@ -123,39 +123,12 @@ pub async fn evaluate(state: &crate::state::AppState) {
 }
 
 async fn insert_if_absent(db: &SqlitePool, rule: &str, target: &str, message: &str) {
-    let exists = sqlx::query_scalar::<_, i64>(
-        "SELECT id FROM notifications WHERE rule = ?1 AND target = ?2 AND resolved_at IS NULL LIMIT 1"
-    )
-    .bind(rule)
-    .bind(target)
-    .fetch_optional(db)
-    .await
-    .ok()
-    .flatten();
-
-    if exists.is_none() {
-        let _ = sqlx::query(
-            "INSERT INTO notifications (severity, rule, target, message, created_at)
-             VALUES (?1, ?2, ?3, ?4, datetime('now'))",
-        )
-        .bind(severity_for(rule))
-        .bind(rule)
-        .bind(target)
-        .bind(message)
-        .execute(db)
-        .await;
-    }
+    // The SQL lives in db::notifications so it can be tested directly.
+    let _ = db::notifications::open_if_absent(db, rule, severity_for(rule), target, message).await;
 }
 
 async fn resolve_rule(db: &SqlitePool, rule: &str, target: &str) {
-    let _ = sqlx::query(
-        "UPDATE notifications SET resolved_at = datetime('now')
-         WHERE rule = ?1 AND target = ?2 AND resolved_at IS NULL",
-    )
-    .bind(rule)
-    .bind(target)
-    .execute(db)
-    .await;
+    let _ = db::notifications::resolve_rule(db, rule, target).await;
 }
 
 fn severity_for(rule: &str) -> &'static str {

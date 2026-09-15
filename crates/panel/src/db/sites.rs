@@ -362,7 +362,7 @@ pub async fn remove_domain(db: &Db, site_id: i64, name: &str) -> sqlx::Result<()
 pub async fn backups(db: &Db, site_id: i64, limit: i64) -> sqlx::Result<Vec<Backup>> {
     let rows = sqlx::query(
         "SELECT b.id, b.site_id, b.snapshot_id, b.scope, b.size_bytes, b.created_at,
-                COALESCE(d.name, 'local') AS destination
+                COALESCE(d.name, b.restic_repo, 'local') AS destination
          FROM backups b
          LEFT JOIN backup_destinations d ON d.id = b.destination_id
          WHERE b.site_id = ?1 ORDER BY b.created_at DESC LIMIT ?2",
@@ -437,4 +437,82 @@ pub async fn domain_by_id(db: &Db, site_id: i64) -> sqlx::Result<String> {
         .fetch_one(db)
         .await?;
     Ok(row.get("domain"))
+}
+
+/// A backup row as the worker or a node sync reports it.
+#[derive(Debug, Clone)]
+pub struct NewBackup {
+    pub snapshot_id: String,
+    pub scope: BackupScope,
+    pub size_bytes: u64,
+    pub files_bytes: u64,
+    pub db_bytes: u64,
+    /// Destination name, or `None` for the agent's own default repository.
+    pub restic_repo: Option<String>,
+}
+
+/// Inserts a backup, or updates the sizes if that snapshot is already known.
+///
+/// Keyed on `(site_id, snapshot_id)` so syncing from a node is idempotent: the
+/// same restic snapshot must not accumulate duplicate rows.
+pub async fn upsert_backup(db: &Db, site_id: i64, backup: &NewBackup) -> sqlx::Result<i64> {
+    let existing: Option<i64> =
+        sqlx::query_scalar("SELECT id FROM backups WHERE site_id = ?1 AND snapshot_id = ?2")
+            .bind(site_id)
+            .bind(&backup.snapshot_id)
+            .fetch_optional(db)
+            .await?;
+
+    if let Some(id) = existing {
+        sqlx::query(
+            "UPDATE backups
+             SET scope = ?2, size_bytes = ?3, files_bytes = ?4, db_bytes = ?5,
+                 restic_repo = COALESCE(?6, restic_repo)
+             WHERE id = ?1",
+        )
+        .bind(id)
+        .bind(backup.scope.as_str())
+        .bind(backup.size_bytes as i64)
+        .bind(backup.files_bytes as i64)
+        .bind(backup.db_bytes as i64)
+        .bind(backup.restic_repo.as_deref())
+        .execute(db)
+        .await?;
+        return Ok(id);
+    }
+
+    let row = sqlx::query(
+        "INSERT INTO backups
+            (site_id, snapshot_id, scope, size_bytes, files_bytes, db_bytes, restic_repo, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) RETURNING id",
+    )
+    .bind(site_id)
+    .bind(&backup.snapshot_id)
+    .bind(backup.scope.as_str())
+    .bind(backup.size_bytes as i64)
+    .bind(backup.files_bytes as i64)
+    .bind(backup.db_bytes as i64)
+    .bind(backup.restic_repo.as_deref())
+    .bind(super::now_string())
+    .fetch_one(db)
+    .await?;
+
+    Ok(row.get("id"))
+}
+
+/// Same as [`upsert_backup`] but keeps the node's own timestamp, used when
+/// syncing snapshots that were created before the panel knew about them.
+pub async fn upsert_backup_at(
+    db: &Db,
+    site_id: i64,
+    backup: &NewBackup,
+    created_at: chrono::DateTime<chrono::Utc>,
+) -> sqlx::Result<i64> {
+    let id = upsert_backup(db, site_id, backup).await?;
+    sqlx::query("UPDATE backups SET created_at = ?2 WHERE id = ?1")
+        .bind(id)
+        .bind(created_at.to_rfc3339())
+        .execute(db)
+        .await?;
+    Ok(id)
 }

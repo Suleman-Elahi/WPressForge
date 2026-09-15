@@ -122,29 +122,82 @@ pub async fn create(
 }
 
 /// List snapshots for a site.
+/// One entry of `restic snapshots --json`.
+///
+/// Restic reports `id`, `time` and `tags`; `summary` (with the processed byte
+/// count) is present from restic 0.17. An earlier version deserialised this
+/// straight into [`Snapshot`], whose field names do not exist in restic's
+/// output, so every listing silently came back empty.
+#[derive(serde::Deserialize)]
+struct ResticSnapshot {
+    id: String,
+    #[serde(default)]
+    short_id: Option<String>,
+    time: String,
+    #[serde(default)]
+    tags: Vec<String>,
+    #[serde(default)]
+    summary: Option<ResticSnapshotSummary>,
+}
+
+#[derive(serde::Deserialize)]
+struct ResticSnapshotSummary {
+    #[serde(default)]
+    total_bytes_processed: u64,
+}
+
+/// Lists the snapshots this site owns, newest first, as panel-shaped backups.
 pub async fn list(
     config: &Config,
     site: &SiteRecord,
     target: &ResticTarget,
-) -> Result<Vec<Snapshot>> {
-    let extra = &[
-        "snapshots",
-        "--json",
-        "--tag",
-        &format!("site={}", site.domain),
-    ];
-    let args = restic_args(target, extra);
-    let env = restic_env(target);
+) -> Result<Vec<wp_common::models::Backup>> {
+    let tag = format!("site={}", site.domain);
+    let args = restic_args(target, &["snapshots", "--json", "--tag", &tag]);
+    let output = exec::run_with_env(config.dry_run, "restic", &args, &restic_env(target)).await?;
 
-    let output = exec::run_with_env(config.dry_run, "restic", &args, &env).await?;
+    if output.skipped {
+        return Ok(Vec::new());
+    }
 
-    let snapshots: Vec<Snapshot> = if config.dry_run {
-        Vec::new()
-    } else {
-        serde_json::from_str(&output.stdout).unwrap_or_default()
-    };
+    let snapshots: Vec<ResticSnapshot> = serde_json::from_str(output.trimmed_stdout())
+        .map_err(|e| wp_common::Error::internal(format!("parsing restic snapshot list: {e}")))?;
 
-    Ok(snapshots)
+    let mut backups: Vec<wp_common::models::Backup> = snapshots
+        .into_iter()
+        .map(|snapshot| {
+            let scope = snapshot
+                .tags
+                .iter()
+                .find_map(|tag| tag.strip_prefix("scope="))
+                .map(|scope| match scope {
+                    "files" => BackupScope::FilesOnly,
+                    "database" => BackupScope::DatabaseOnly,
+                    _ => BackupScope::Full,
+                })
+                .unwrap_or(BackupScope::Full);
+
+            wp_common::models::Backup {
+                // The panel keys rows by snapshot id, so ids come from restic.
+                id: 0,
+                site_id: site.site_id,
+                snapshot_id: snapshot.short_id.unwrap_or(snapshot.id),
+                size_bytes: snapshot
+                    .summary
+                    .map(|s| s.total_bytes_processed)
+                    .unwrap_or(0),
+                scope,
+                destination: target.repo.clone(),
+                created_at: chrono::DateTime::parse_from_rfc3339(&snapshot.time)
+                    .map(|t| t.with_timezone(&chrono::Utc))
+                    .unwrap_or_else(|_| chrono::Utc::now()),
+            }
+        })
+        .collect();
+
+    // Newest first: the panel renders the list in this order.
+    backups.sort_by_key(|backup| std::cmp::Reverse(backup.created_at));
+    Ok(backups)
 }
 
 /// Restore a snapshot.

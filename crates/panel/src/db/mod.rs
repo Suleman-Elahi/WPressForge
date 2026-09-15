@@ -31,12 +31,12 @@ pub type Db = SqlitePool;
 /// WAL for concurrent reads, `NORMAL` sync, and a busy timeout so writers queue
 /// instead of erroring.
 pub async fn connect(path: &Path) -> anyhow::Result<Db> {
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            tokio::fs::create_dir_all(parent)
-                .await
-                .with_context(|| format!("creating data dir {}", parent.display()))?;
-        }
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .with_context(|| format!("creating data dir {}", parent.display()))?;
     }
 
     let options = SqliteConnectOptions::from_str(&format!("sqlite://{}", path.display()))?

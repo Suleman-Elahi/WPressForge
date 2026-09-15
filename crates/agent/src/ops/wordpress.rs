@@ -115,9 +115,7 @@ pub async fn flush_cache(config: &Config, site: &SiteRecord) -> Result<()> {
         .map(|_| ())
 }
 
-/// Replaces the site URL everywhere. Used by clone and staging, which land with
-/// their own milestone; kept here because the vhost and DB pieces already exist.
-#[allow(dead_code)]
+/// Replaces the site URL everywhere. Used by clone, staging and import.
 pub async fn search_replace(
     config: &Config,
     site: &SiteRecord,
@@ -277,7 +275,25 @@ pub async fn list_cron_events(config: &Config, site: &SiteRecord) -> Result<Vec<
     )
     .await?;
     if out.skipped {
-        return Ok(vec![]);
+        // Dry-run: stable sample data, the same convention the plugin, theme and
+        // user listings follow, so the UI can be exercised without a real site.
+        return Ok(vec![
+            CronEventInfo {
+                hook: "wp_version_check".into(),
+                next_run_relative: "in 4 hours".into(),
+                schedule: "twicedaily".into(),
+            },
+            CronEventInfo {
+                hook: "wp_scheduled_delete".into(),
+                next_run_relative: "in 11 hours".into(),
+                schedule: "daily".into(),
+            },
+            CronEventInfo {
+                hook: "wp_privacy_delete_old_export_files".into(),
+                next_run_relative: "in 38 minutes".into(),
+                schedule: "hourly".into(),
+            },
+        ]);
     }
     serde_json::from_str(out.trimmed_stdout()).map_err(Error::internal)
 }
@@ -352,8 +368,7 @@ pub async fn reset_wp_password(
     // Generate a random password, never log it.
     let mut bytes = [0u8; 24];
     rand::RngCore::fill_bytes(&mut rand::rng(), &mut bytes);
-    let password =
-        base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, &bytes);
+    let password = base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, bytes);
     let password = password.chars().take(20).collect::<String>();
     wp(
         config,
@@ -520,7 +535,8 @@ pub async fn set_db_config(
             "set",
             "DB_NAME",
             &credentials.name,
-            "--raw",
+            // No --raw: these are PHP strings and must stay quoted in
+            // wp-config.php. --raw writes them bare, which is a parse error.
             "--allow-root",
         ],
     )
@@ -533,7 +549,6 @@ pub async fn set_db_config(
             "set",
             "DB_USER",
             &credentials.user,
-            "--raw",
             "--allow-root",
         ],
     )
@@ -546,7 +561,6 @@ pub async fn set_db_config(
             "set",
             "DB_PASSWORD",
             &credentials.password,
-            "--raw",
             "--allow-root",
         ],
     )

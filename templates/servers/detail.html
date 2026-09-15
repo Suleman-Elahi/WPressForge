@@ -64,6 +64,11 @@
         <dt>Agent URL</dt><dd class="mono">{{ server.server.agent_url }}</dd>
         <dt>IP address</dt><dd class="mono">{{ server.server.ip_address }}</dd>
         <dt>Hostname</dt><dd class="mono">{{ server.server.hostname }}</dd>
+        <dt>Certificate pin</dt>
+        <dd class="mono">
+          {% if let Some(fingerprint) = server.agent_fingerprint %}{{ fingerprint }}
+          {% else %}<span class="pill warn">not pinned</span>{% endif %}
+        </dd>
         <dt>Last seen</dt><dd>{{ server.server.last_seen_label() }}</dd>
         <dt>Attached</dt><dd>{{ server.server.created_label() }}</dd>
       </dl>

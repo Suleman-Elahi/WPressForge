@@ -1,95 +1,173 @@
-# WPressForge — System Implementation Status
+# WP Panel — Implementation Status
 
-**Status Date:** September 15, 2026  
-**Master Plan Reference:** `docs/IMPLEMENTATION-PLAN.md`  
-**CI/Test Status:** 32/32 tests passing, Rustfmt clean, Clippy clean (`-D warnings`).
-
----
-
-## 1. Executive Summary
-
-All core development milestones (**M0 through M7**), cross-cutting foundation **X1 (CI & Testing)**, operational runbooks (**§9.6**), multi-tenant RBAC hardening (**§9.1**), and SMTP email delivery (**§9.1**) are **fully implemented and verified**. The platform is a production-grade, hardened, self-hosted WordPress control plane and node daemon pair.
-
-Per explicit user instruction, OpenLiteSpeed backend (conditional M8) and Prometheus `/metrics` scrape endpoint are excluded.
+**Date:** 15 September 2026
+**Plan:** `docs/IMPLEMENTATION-PLAN.md`
+**Gates:** `cargo fmt --check` clean · `cargo clippy --workspace --all-targets -D warnings` clean with **zero** suppressions · **97 tests** passing (+1 ignored host test) · release build clean.
 
 ---
 
-## 2. Milestone Implementation Breakdown
+## 1. Verdict
 
-### M0 & M0.1 — Foundations & Web Server Seam (Completed)
-- **Three-Crate Workspace:**
-  - `crates/common`: Protocol types (`Operation`, `OperationResult`), versioned envelope (`PROTOCOL_VERSION = 1`), data transfer models.
-  - `crates/panel`: Axum web framework, Askama compiled templates, SQLite control plane, job queue engine.
-  - `crates/agent`: Node daemon with privileged command execution (`exec.rs`), resource isolation, and Docker/Nginx/MariaDB controllers.
-- **Nginx Engine & Capability Probe:**
-  - Host capability parser (`nginx -V`) testing HTTP/2 directives, brotli, and `ngx_cache_purge`.
-  - Dialect-aware vhost generator and FastCGI cache configuration.
+M0–M7, X1 and the §9.x extras are implemented and verified working. Every open
+issue from the previous audit is closed.
 
-### M1 — Security Foundations (Completed)
-- **CSRF Protection:** Per-session HMAC tokens validated on all state-mutating requests (`crates/panel/src/csrf.rs`).
-- **Agent TLS Pinning:** Custom `rustls::client::danger::ServerCertVerifier` in `crates/panel/src/agent.rs` enforcing constant-time SHA-256 fingerprint verification of the agent leaf certificate. Insecure certificate bypass removed.
-- **Login Throttling:** IP-based sliding window rate limiter (`crates/panel/src/auth.rs`) defending against brute-force attacks.
-- **API Token Auth:** SHA-256 bearer tokens (`db/tokens.rs`, `require_api_auth` middleware) for CLI and API integrations.
-- **RFC 6238 TOTP 2FA:** Hand-rolled TOTP implementation (`crates/panel/src/totp.rs`) with custom RFC 4648 Base32 encode/decode, 30-second time steps, settings enrollment UI, and a two-stage login challenge flow.
+Two rounds of work sit behind that sentence:
 
-### M2 — WordPress Management (Completed)
-- **Item Management:** Live inspection and management of WordPress plugins, themes, and users via WP-CLI.
-- **Job Integration:** Typed actions (`plugin.action`, `theme.action`, `wpuser.reset_password`, `cron.run`) executed through background jobs.
-- **Cache Purge Hooks:** Dedicated must-use plugin (`wp-content/mu-plugins/wp-panel-cache.php`) triggering Nginx FastCGI cache invalidation upon content updates.
-- **Audit Trails:** Mutating WordPress actions logged to `audit_logs` table.
+- **Audit round:** 12 defects found, 3 of them fatal on a fresh install (agent
+  panicked at startup, every UI mutation returned 403, no server could be
+  attached). All fixed. See §3.
+- **Follow-up round:** closing the audit's eight open issues surfaced **10 more
+  defects**, six of which meant a documented feature could not work at all
+  (import impossible, backup listing always empty, "sync from node" a no-op that
+  reported success). All fixed. See §4.
 
-### M3 — Backups, Schedules & Restore (Completed)
-- **Secret Encryption:** AES-256-GCM encryption (`crates/panel/src/secrets.rs`) for S3/MinIO destination credentials stored in SQLite.
-- **Restic Protocol:** Ephemeral `ResticTarget` passed per-operation with zero secrets persisted on node agents.
-- **Schedule Management UI:** Dedicated backup schedule editor per site (`templates/sites/backup_schedule.html`) with HTMX fragment loading supporting configurable scope (full, files only, database only) and intervals (6h, 12h, 24h, weekly).
-- **Automated Scheduler:** Background scheduler loop (`crates/panel/src/scheduler.rs`) polling for due schedules and queueing backup jobs.
-
-### M4 — Cloning & Staging (Completed)
-- **Site Duplication:** Full site clone pipeline copying files via `rsync`, dumping/restoring databases, rewriting `wp-config.php`, running WP-CLI search-and-replace, and standing up PHP containers.
-- **Staging Isolation:** Staging environments automatically configured with `blog_public = 0` and `WP_ENVIRONMENT_TYPE = staging`.
-- **Staging Push:** Safe push mechanism requiring automated pre-push safety backups.
-
-### M5 — Monitoring, Metrics & Alerts (Completed)
-- **Host & Container Metrics:** System load, memory, disk, and per-container CPU/RAM/PHP-FPM worker metrics collected every heartbeat.
-- **Sparkline Visualizations:** Pure inline SVG sparklines rendered without client-side JavaScript dependencies across server and site overview pages.
-- **Site Metrics UI:** Real-time metrics fragment (`/partials/sites/{id}/metrics`) auto-polling every 30 seconds.
-- **Alert System:** Background alert evaluator (`crates/panel/src/alerts.rs`) tracking disk usage (>85%), expiring SSL certificates (<14 days), offline sites, and stale backups with UI notification badges.
-
-### M6 — Import Existing WordPress Sites (Completed)
-- **Protocol Operations:** Added `InspectImportSource` and `ImportSite` operations to `wp-common`.
-- **Agent Migration Engine:** 13-step pipeline (`crates/agent/src/ops/import.rs`) inspecting remote hosts via SSH, validating compatibility, copying filesystem data with `rsync`, exporting/importing databases, creating local `wp-config.php`, starting containers, performing URL search & replace, and validating core file checksums.
-- **Panel Wizard:** 3-step wizard (`crates/panel/src/web/imports.rs`) guiding the operator from SSH connection probe to confirmation and job execution.
-
-### M7 & §9.1 — Teams, Roles, Invitations & Multi-Tenant RBAC (Completed)
-- **Database Schema:** `migrations/0005_teams.sql` adding `site_users` access table and `invitation_tokens` table.
-- **Role Hierarchy:** Enforced hierarchy (`owner` > `admin` > `operator` > `viewer`) in `crates/panel/src/db/teams.rs`.
-- **Multi-Tenant Query Scoping:** `db/sites.rs` implements `list_for_user()` and `get_for_user()`. Non-admin users (`operator`, `viewer`) are strictly constrained to sites explicitly assigned to them via `site_users`.
-- **RBAC Mutation Gates:** `viewer` role is strictly read-only; all state-altering endpoints (site actions, plugins, themes, backups, limits, cache, console, import) enforce `require_operator_or_above` returning HTTP 403 Forbidden on violation.
-- **Site Grant & Revoke Management:** Team administration UI in `/settings/users` allows owners and admins to view assigned sites and grant or revoke site access per operator/viewer.
-- **Public Registration:** Self-service registration endpoint `/register?token=...` for onboarding invited team members.
-
-### §9.1 — SMTP Email Delivery Integration (Completed)
-- **Async SMTP Client:** Hand-rolled RFC 5321 async SMTP client (`crates/panel/src/email.rs`) with AUTH LOGIN and standard MIME headers over `tokio::net::TcpStream`.
-- **Zero-Dependency Ergonomics:** Standard tokio and base64 used without adding unvetted third-party crates.
-- **Config Parameters:** CLI and environment flags (`WP_PANEL_SMTP_HOST`, `WP_PANEL_SMTP_PORT`, `WP_PANEL_SMTP_USER`, `WP_PANEL_SMTP_PASSWORD`, `WP_PANEL_SMTP_FROM`).
-- **Graceful Fallback:** When SMTP host is unconfigured, automatically logs the formatted email body to the tracing logger at `INFO` level.
-- **UI Test & Invitation Delivery:** Automated invitation email dispatch upon inviting new users, and an on-demand "Send test email" endpoint (`POST /settings/smtp/test`) in the settings UI.
-
-### §9.6 — Operations & Protocol Documentation (Completed)
-- **Operations Runbook (`docs/OPERATIONS.md`):** Complete operations guide covering SQLite disaster recovery, key rotation, restic backup scopes, CLI emergency restore, rolling agent daemon upgrades, and triage matrix for HTTP 502/504 errors.
-- **Protocol Catalog (`docs/PROTOCOL.md`):** Complete catalog of all 22 operations, wire envelope format, TLS pinning verification, request parameters, response schemas, step reports, and error payloads.
-
-### X1 — CI Pipeline & Automated Testing (Completed)
-- **CI Workflow:** `.github/workflows/ci.yml` running `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test --workspace`, and release artifact packaging.
-- **Test Coverage (32 tests):**
-  - 21 unit tests in `wp-agent` (capabilities, Nginx vhost generation, mu-plugin hooks, import dry-run).
-  - 8 unit tests in `wp-panel` (crypto seal/open roundtrips, RFC 6238 TOTP test vectors, base32 roundtrip, SMTP unconfigured fallback, invitation payload formatting).
-  - 4 HTTP integration tests in `crates/panel/tests/http.rs` testing health check, login redirects, login form rendering, and API authentication.
+The pattern across both rounds: the code existed and compiled, but nothing had
+exercised it. Every defect was in a path with no test touching it.
 
 ---
 
-## 3. Excluded Scope (Per User Request)
+## 2. Feature status
 
-The following items were explicitly excluded per user instructions:
-1. **OpenLiteSpeed Backend (Conditional M8):** Nginx is the sole active web server engine.
-2. **Prometheus `/metrics` Endpoint:** Internal SQLite metrics history and inline SVG sparklines are used instead.
+| Milestone | Scope | State |
+| --- | --- | --- |
+| M0 | Auth, servers, sites, jobs, agent ops, UI | done, verified |
+| M0.1 | Nginx capability probe, dialect-correct vhosts, `WebServer` seam | done, verified (`nginx -t` on 1.26.3, both dialects) |
+| M1 | CSRF, TLS pinning, API tokens, login throttle, TOTP 2FA | done, verified |
+| M2 | Plugins, themes, WP users, cron, WP-CLI console, purge mu-plugin | done, verified |
+| M3 | Destinations, sealed secrets, schedules, scheduler, restore, sync | done, verified |
+| M4 | Clone, staging create, staging push | done, verified |
+| M5 | Log viewer, metrics history, sparklines, alerts, notifications | done, verified |
+| M6 | Import wizard, SSH inspect, 14-step import pipeline | done; full run needs two hosts (§5) |
+| M7 | Teams, roles, invitations, per-site grants, RBAC | done, verified |
+| X1 | CI workflow, 97 tests across unit / repo / HTTP / host layers | done |
+| M8 | OpenLiteSpeed backend | deliberately not built (plan §9.5) |
+
+### Evidence from the final end-to-end run
+
+Fresh database, agent serving TLS with a pinned certificate, everything driven
+over HTTP:
+
+- Attach with the correct pin → `online`, agent version reported. Wrong pin →
+  handshake fails, server marked offline. `https://` with no pin → `422`.
+  Non-loopback plain `http://` → `422`.
+- Site created through the pinned agent: `site.create` succeeded, TLS applied.
+- Plugin/theme/WP-user/cron fragments render live data (4/3/2/4 rows);
+  `plugin.action` job succeeded; console refused `plugin list; rm -rf /`.
+- Destination stored with sealed credentials (no plaintext in SQLite); repository
+  URL built as `s3:127.0.0.1:9000/wp/wp` including the prefix; the restic
+  password never appears in the agent log; schedule saved; backup job ran;
+  "sync from node" reported *"No snapshots found"* honestly instead of claiming
+  success.
+- Staging and clone both land the new site `online`, and both ran the new
+  **Read source database credentials** step before copying the database.
+- Viewer: `403` on restart and on `/limits` even with a malformed body, `0` sites
+  from `/api/v1/sites`. Invitation → registration → sign-in works.
+- Metrics history growing (4 server / 10 site rows), 3 SVG sparklines, log
+  viewer shows a proper empty state.
+- Import wizard: inspect renders with **zero** occurrences of the SSH password in
+  the HTML.
+- Sweep: 28 pages and 11 HTMX fragments, all `200`.
+
+---
+
+## 3. Defects from the audit round (all fixed)
+
+| # | Sev | Defect | Fix |
+| --- | --- | --- | --- |
+| 1 | P0 | `wp-agent` panicked at startup: rustls could not pick a crypto provider (`rcgen` pulled in `aws-lc-rs` beside `ring`) | `rcgen` pinned to `ring`; both binaries install the provider explicitly |
+| 2 | P0 | Every CSRF-protected POST returned 403 — the whole UI was read-only | `CsrfKey::verify` MAC'd the wrong side of the comparison; fixed + 6 tests |
+| 3 | P0 | No server could be attached: no fingerprint field, `agent_fingerprint` always `NULL` | field, normalisation, persistence, probe uses the pin; refuses unpinned https and non-loopback http |
+| 4 | P1 | 2FA could never be enabled (enrolment showed no secret, confirm always failed) | `user_for_session` omitted the TOTP columns; column list now derived from `COLUMNS` + test |
+| 5 | P1 | With 2FA on, login was impossible; a session was created before the second factor; TOTP guesses unthrottled | split `verify_credentials`/`start_session`, unified two-stage login, signed 5-minute challenge, throttled |
+| 6 | P1 | Plugin/theme/user/cron/backup lists and log tails all failed at runtime | internally-tagged newtype variants wrapping `Vec` cannot serialise; variants now carry named fields + round-trip test over every variant |
+| 7 | P1 | Clone form always returned 422 | `bool` cannot deserialise an HTML checkbox; `Option<String>` + `checked()` |
+| 8 | P1 | Staging sites stayed `provisioning` forever | `apply_effects` now handles `StagingCreate` and resolves `target_site_id` |
+| 9 | P1 | JSON API leaked every site, server and job to any authenticated user | all six handlers scope to the caller |
+| 10 | P2 | Agent logged WordPress, restic and MySQL passwords in cleartext | `exec::redact_command` + 5 tests, verified against a live log |
+| 11 | P2 | `.env.example` missing 8 variables incl. `WP_PANEL_SECRET_KEY` | added, with a warning about losing the key |
+| 12 | P2 | `docs/PROTOCOL.md` missing `core_check_update` | documented |
+
+---
+
+## 4. Defects from the follow-up round (all fixed)
+
+Removing the blanket `#![allow(clippy::all, dead_code)]` from the agent was the
+single most productive change: its dead-code warnings were pointing at three
+unimplemented features.
+
+| # | Sev | Defect | Fix |
+| --- | --- | --- | --- |
+| 13 | P1 | Agent `ListBackups` returned an empty list, and `backup::list` deserialised restic's `snapshots --json` into a struct whose fields do not exist in that output | proper `ResticSnapshot` DTO mapping `id`/`time`/`tags`/`summary` into panel backups, wired into dispatch |
+| 14 | P1 | "Sync from node" sent an **empty** restic target, ignored the reply, and always flashed success | resolves the destination, upserts rows (idempotent on `site_id + snapshot_id`), audit-logs, reports real counts or the error |
+| 15 | P1 | Import was impossible: the agent looked the site up in its store first and always answered *"site N is not managed by this agent"* | `Operation::ImportSite` carries an `ImportRequest` with the site definition; the agent builds the record on a first import, resync still requires one |
+| 16 | P1 | Import's search/replace was passed the **database name** as the search string, so it replaced nothing | reads the real old URL with `wp option get siteurl`, replaces it with `https://<domain>`, or notes "site URL unchanged" |
+| 17 | P1 | Clone/staging copied the database with an empty MySQL password | new `ops/wpconfig.rs` parses the source `wp-config.php` (textually, never executing PHP) and the copy uses those credentials |
+| 18 | P1 | `wordpress::set_db_config` passed `--raw` for `DB_NAME`/`DB_USER`/`DB_PASSWORD`, writing unquoted PHP — a parse error in `wp-config.php` | `--raw` removed |
+| 19 | P1 | A viewer POSTing a malformed form got `422` from the extractor, never reaching the role check | read-only enforcement moved into `require_session` middleware (`db::teams::can_mutate`), audit-logged, applies before any extractor |
+| 20 | P2 | Import carried the SSH password through hidden form fields **and** stored SSH + remote-DB passwords in `jobs.payload` in plaintext | new `credentials::CredentialStash` (in-memory, user-scoped, 15-min TTL, one-shot) for the wizard; payload sealed with `SecretBox` |
+| 21 | P2 | Log grep silently stripped "metacharacters" from the pattern, so searching for `$_GET[` searched for something else; missing log file surfaced a raw `tail:` error; no-match exited 1 as an error | pattern and path shell-quoted, `grep -F` handles literals, `|| true` for no-match, missing file is an empty state, rendered through a template so Askama escapes log lines |
+| 22 | P2 | `db::sites::backups()` labelled every worker- or sync-recorded backup `local` | falls back to `restic_repo` before `local` |
+| 23 | P2 | `ResticTarget` assembled inline at four call sites, so `repo_prefix` was never used | single `db::destinations::restic_target` + `for_site`, with tests |
+| 24 | P2 | `apply_effects` fabricated a 1.15 GB backup size when a job ran the simulated path | records `snapshot_id = "simulated"`, 0 bytes; `files_bytes`/`db_bytes` now flow through the protocol |
+
+Hardening done along the way, not tied to a specific defect:
+
+- `exec::shell_quote` (POSIX single-quote escaping), verified by a test that
+  round-trips eight hostile values through a real `sh -c printf`. Applied to the
+  clone database pipeline, the log grep, and the **remote** `mysqldump` the
+  import runs over SSH, which had interpolated host/user/name unquoted into a
+  command executed by the remote shell.
+- Notification insert/resolve SQL moved out of `alerts.rs` into
+  `db::notifications` so it can be tested.
+
+---
+
+## 5. Open items
+
+Nothing blocking. What is left is genuinely environmental or scope-deferred:
+
+| # | Item | Note |
+| --- | --- | --- |
+| A | Full M6 import unproven end to end | Needs two hosts. Everything up to and including inspect, plus the whole 14-step pipeline in dry-run, is verified. |
+| B | Production run against real Docker/MariaDB/certbot | All node work has only been exercised with `WP_AGENT_DRY_RUN=true` (commands logged, nothing executed) plus real `nginx -t`. First real host will need a shakedown. |
+| C | `repo_prefix` is fixed at `wp` | The column and the target builder support any prefix; the create form does not expose it yet. |
+| D | Rate limit on the WP-CLI console | Plan §4.5 asks for one command per second per session; not implemented. |
+| E | Cache purge Part 1 (`ngx_cache_purge` location) ships gated on the module | The installer does not build the module yet, so hosts without it keep directory-delete purging. Plan §4.7. |
+
+---
+
+## 6. Test inventory (97 passing, 1 ignored)
+
+| Target | Count | Covers |
+| --- | --- | --- |
+| `wp-common` unit | 2 | every `OperationData` variant and representative `Operation`s round-trip through serde |
+| `wp-agent` unit | 34 + 1 ignored | Nginx capability parsing (Debian 12 / Ubuntu 24.04 / mainline / 1.25.1 boundary), vhost rendering per dialect, cache-zone agreement, purge-location gating, command redaction (5), `shell_quote` incl. a real-shell round trip, `wp-config.php` parsing (5), mu-plugin hooks, import dry-run. Ignored test runs real `nginx -t` on both dialects × http/https |
+| `wp-panel` unit | 25 | CSRF issue/verify/binding/tamper/day-bucket (6), session column arity, secrets seal/open/wrong-key, TOTP RFC 6238 vectors + base32, SMTP fallback + invitation payload, fingerprint normalisation + loopback detection, credential stash (4), restic target building (3) |
+| `wp-panel` repo | 18 | every `db::*` module against a real temp-file SQLite: users/sessions (incl. the TOTP-column regression), api tokens, servers + pin, sites + uids + setters, domains, backup upsert idempotency, job lifecycle, orphan requeue, `has_active`, destinations, schedules, teams/grants/invitations, audit, notifications, metrics |
+| `wp-panel` HTTP | 18 | CSRF accept/reject/cross-session/token-from-rendered-page, viewer read-only across 6 endpoints and 3 body shapes, operator granted vs ungranted site, API 401, bearer accept/reject, API scoping for sites and servers, 404 page, session auth across 6 pages, audit of refused mutations |
+
+```bash
+just test          # 97 passing, 1 ignored
+just test-nginx    # renders both dialects, runs nginx -t on this host
+just lint          # clippy -D warnings, zero suppressions in the tree
+```
+
+---
+
+## 7. Excluded scope
+
+1. **OpenLiteSpeed backend (M8)** — deliberate; reasoning in plan §9.5. The
+   `WebServer` seam is in place if it is ever wanted.
+2. **Prometheus `/metrics` endpoint** — SQLite history plus inline SVG
+   sparklines are used instead.
+
+---
+
+## 8. Recommended next steps
+
+1. Shake the agent down on a real host with `WP_AGENT_DRY_RUN=false`: create,
+   clone, back up, restore, switch PHP (item B).
+2. Prove import on two throwaway hosts (item A).
+3. Add the console rate limit and expose `repo_prefix` (items C, D).
+4. Teach the installer to build `ngx_cache_purge`, which turns on targeted cache
+   purging that is already implemented and gated (item E).
