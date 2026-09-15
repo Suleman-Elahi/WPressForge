@@ -1,4 +1,4 @@
-# WP Panel — Implementation Plan (post-scaffold)
+# WPressForge — Implementation Plan (post-scaffold)
 
 Audience: an engineer or coding agent picking up the repository with no prior
 context. Everything needed to implement the next milestones is here: exact file
@@ -7,7 +7,7 @@ commands that prove each milestone works.
 
 Companion documents:
 
-- Architecture and product vision: [`../# Open-Source GridPane Alternative — Rev.md`](../%23%20Open-Source%20GridPane%20Alternative%20%E2%80%94%20Rev.md)
+- Architecture and product vision: [`# Open-Source GridPane Alternative — Rev.md`](%23%20Open-Source%20GridPane%20Alternative%20%E2%80%94%20Rev.md)
 - Operator-facing overview: [`../README.md`](../README.md)
 
 Audited and hardened on 2026-09-15: M1–M7 and X1 are implemented and verified

@@ -1,7 +1,7 @@
-# WP Panel — Implementation Status
+# WPressForge — Implementation Status
 
 **Date:** 15 September 2026
-**Plan:** `docs/IMPLEMENTATION-PLAN.md`
+**Plan:** `plans/IMPLEMENTATION-PLAN.md`
 **Gates:** `cargo fmt --check` clean · `cargo clippy --workspace --all-targets -D warnings` clean with **zero** suppressions · **97 tests** passing (+1 ignored host test) · release build clean.
 
 ---

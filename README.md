@@ -9,7 +9,7 @@ Encrypt, Restic, WP-CLI.
 The project ships two binaries: **`wp-panel`** (the control plane) and
 **`wp-agent`** (the node agent).
 
-Architecture and roadmap: [`# Open-Source GridPane Alternative — Rev.md`](./%23%20Open-Source%20GridPane%20Alternative%20%E2%80%94%20Rev.md)
+Architecture and roadmap: [`# Open-Source GridPane Alternative — Rev.md`](./plans/%23%20Open-Source%20GridPane%20Alternative%20%E2%80%94%20Rev.md)
 
 ```text
             Browser
@@ -39,6 +39,8 @@ migrations/ SQLite schema for the panel
 templates/  Askama templates (server-rendered HTML)
 static/     CSS, ~2 KB of JS, vendored HTMX
 deploy/     systemd units, Nginx globals, PHP image, agent installer
+docs/       landing page (index.html)
+plans/      design plan, deployment guide, operations runbook, wire protocol
 ```
 
 ## Run it locally
@@ -65,10 +67,10 @@ the host.
 
 ## Production install
 
-The short version is below; [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md) has the
+The short version is below; [`plans/DEPLOYMENT.md`](./plans/DEPLOYMENT.md) has the
 full production guide — service accounts, hardened env files, reverse proxy,
 TLS pinning, firewalls, hardening checklist and rollback. If you want the panel
-and the sites on **one** server, read [`docs/SINGLE-HOST.md`](./docs/SINGLE-HOST.md)
+and the sites on **one** server, read [`plans/SINGLE-HOST.md`](./plans/SINGLE-HOST.md)
 instead.
 
 1. Panel: build with `cargo build --release`, copy `wp-panel`, `templates/` is
@@ -136,11 +138,11 @@ first run against live Docker, MariaDB and certbot still needs a shakedown, and
 the full import path needs two hosts to prove end to end.
 
 Current state, the defect history behind it, and the remaining items are tracked
-in [`status`](./status); a step-by-step production deployment guide is in
-[`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md), the engineering plan and
-conventions are in [`docs/IMPLEMENTATION-PLAN.md`](./docs/IMPLEMENTATION-PLAN.md),
-with operational runbooks in [`docs/OPERATIONS.md`](./docs/OPERATIONS.md) and the
-wire protocol in [`docs/PROTOCOL.md`](./docs/PROTOCOL.md).
+in [`plans/status`](./plans/status); a step-by-step production deployment guide is
+in [`plans/DEPLOYMENT.md`](./plans/DEPLOYMENT.md), the engineering plan and
+conventions are in [`plans/IMPLEMENTATION-PLAN.md`](./plans/IMPLEMENTATION-PLAN.md),
+with operational runbooks in [`plans/OPERATIONS.md`](./plans/OPERATIONS.md) and the
+wire protocol in [`plans/PROTOCOL.md`](./plans/PROTOCOL.md).
 
 ## License
 

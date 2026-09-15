@@ -21,7 +21,7 @@ use wp_common::Result;
 #[derive(Clone)]
 pub enum WebServer {
     Nginx(NginxServer),
-    // Future: OpenLiteSpeed(OlsServer) — see docs/IMPLEMENTATION-PLAN.md §M8.
+    // Future: OpenLiteSpeed(OlsServer) — see plans/IMPLEMENTATION-PLAN.md §M8.
 }
 
 impl WebServer {
