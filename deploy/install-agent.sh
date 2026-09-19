@@ -15,12 +15,49 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 : "${WP_AGENT_TOKEN:?set WP_AGENT_TOKEN to the token shown by the panel}"
+if [[ ${#WP_AGENT_TOKEN} -lt 24 ]]; then
+  echo "WP_AGENT_TOKEN must be at least 24 characters" >&2
+  exit 1
+fi
 WP_AGENT_BIND="${WP_AGENT_BIND:-0.0.0.0:8443}"
+WP_AGENT_PANEL_IP="${WP_AGENT_PANEL_IP:-}"
+WP_AGENT_ACME_EMAIL="${WP_AGENT_ACME_EMAIL:-}"
+WP_AGENT_RESTIC_REPO="${WP_AGENT_RESTIC_REPO:-}"
 PHP_VERSIONS="${PHP_VERSIONS:-8.2 8.3 8.4}"
 # Distro Nginx (Debian 12: 1.22, Ubuntu 24.04: 1.24) has no HTTP/3 and no
 # `http2 on;`. The agent detects this and renders compatible config either way,
 # so mainline is optional. Set NGINX_MAINLINE=true to get HTTP/3 support.
 NGINX_MAINLINE="${NGINX_MAINLINE:-false}"
+
+if [[ "$NGINX_MAINLINE" != "true" && "$NGINX_MAINLINE" != "false" ]]; then
+  echo "NGINX_MAINLINE must be true or false" >&2
+  exit 1
+fi
+for version in $PHP_VERSIONS; do
+  if [[ ! "$version" =~ ^[0-9]+\.[0-9]+$ ]]; then
+    echo "invalid PHP version: $version" >&2
+    exit 1
+  fi
+done
+
+for value in "$WP_AGENT_BIND" "$WP_AGENT_TOKEN" "$WP_AGENT_PANEL_IP" "$WP_AGENT_ACME_EMAIL" "$WP_AGENT_RESTIC_REPO"; do
+  if [[ "$value" == *$'\n'* || "$value" == *$'\r'* ]]; then
+    echo "configuration values must be single-line" >&2
+    exit 1
+  fi
+done
+
+if [[ -r /etc/os-release ]]; then
+  # shellcheck disable=SC1091
+  . /etc/os-release
+  case "${ID:-}:${VERSION_ID:-}" in
+    debian:12|ubuntu:24.04) ;;
+    *)
+      echo "unsupported OS: ${PRETTY_NAME:-unknown}; supported: Debian 12, Ubuntu 24.04" >&2
+      exit 1
+      ;;
+  esac
+fi
 
 echo "==> installing packages"
 export DEBIAN_FRONTEND=noninteractive
@@ -64,6 +101,7 @@ done
 echo "==> agent binary"
 install -m 0755 "$(dirname "$0")/../target/release/wp-agent" /usr/local/bin/wp-agent
 
+umask 077
 cat > /etc/wp-panel/agent.env <<ENV
 WP_AGENT_BIND=${WP_AGENT_BIND}
 WP_AGENT_TOKEN=${WP_AGENT_TOKEN}
@@ -74,10 +112,10 @@ WP_AGENT_STATE=/var/lib/wp-agent/state.json
 WP_AGENT_UID_BASE=10001
 # Review the logged commands, then set this to false.
 WP_AGENT_DRY_RUN=true
-# WP_AGENT_RESTIC_REPO=s3:s3.amazonaws.com/my-wp-backups
-# WP_AGENT_ACME_EMAIL=ops@example.com
-WP_AGENT_LOG=info
 ENV
+[[ -n "$WP_AGENT_RESTIC_REPO" ]] && printf 'WP_AGENT_RESTIC_REPO=%s\n' "$WP_AGENT_RESTIC_REPO" >> /etc/wp-panel/agent.env
+[[ -n "$WP_AGENT_ACME_EMAIL" ]] && printf 'WP_AGENT_ACME_EMAIL=%s\n' "$WP_AGENT_ACME_EMAIL" >> /etc/wp-panel/agent.env
+printf '%s\n' 'WP_AGENT_LOG=info' >> /etc/wp-panel/agent.env
 chmod 0600 /etc/wp-panel/agent.env
 
 echo "==> systemd unit"
@@ -88,7 +126,14 @@ systemctl enable --now wp-agent
 echo "==> firewall"
 ufw allow 80/tcp
 ufw allow 443/tcp
-echo "NOTE: expose ${WP_AGENT_BIND} only to the panel (private network or 'ufw allow from <panel-ip>')."
+if [[ -n "$WP_AGENT_PANEL_IP" ]]; then
+  ufw allow from "$WP_AGENT_PANEL_IP" to any port 8443 proto tcp
+  echo "Agent port 8443 is restricted to ${WP_AGENT_PANEL_IP}."
+elif [[ "$WP_AGENT_BIND" == 127.0.0.1:* || "$WP_AGENT_BIND" == "[::1]:"* || "$WP_AGENT_BIND" == localhost:* ]]; then
+  echo "Agent is loopback-only at ${WP_AGENT_BIND}; no UFW rule was added for 8443."
+else
+  echo "NOTE: expose ${WP_AGENT_BIND} only to the panel (private network or 'ufw allow from <panel-ip>')."
+fi
 
 systemctl --no-pager status wp-agent | head -n 5
 

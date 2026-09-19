@@ -117,6 +117,23 @@ ls -lh target/release/wp-panel target/release/wp-agent
 `templates/` is compiled into both binaries. `static/` is served from disk and
 must be shipped alongside `wp-panel`.
 
+### Interactive installer
+
+A release bundle that preserves `deploy/`, `static/`, and
+`target/release/{wp-panel,wp-agent}` can be installed with:
+
+```bash
+sudo deploy/install.sh                       # choose panel, agent, or both
+sudo deploy/install.sh --role all-in-one     # safe loopback-only local agent
+```
+
+The installer writes root-only environment files, backs up an existing one only
+with explicit confirmation, starts the agent in dry-run mode, and requires a
+panel IP before exposing a standalone agent on `8443`. It does **not** infer DNS
+or provision the panel's public TLS vhost; complete §5 after installing the
+panel. For automation, run `deploy/install.sh --help` and use
+`--non-interactive` with the listed environment variables.
+
 ---
 
 ## 3. Network and firewall matrix

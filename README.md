@@ -73,17 +73,28 @@ TLS pinning, firewalls, hardening checklist and rollback. If you want the panel
 and the sites on **one** server, read [`plans/SINGLE-HOST.md`](./plans/SINGLE-HOST.md)
 instead.
 
-1. Panel: build with `cargo build --release`, copy `wp-panel`, `templates/` is
-   compiled in, `static/` is served from disk. Use
-   `deploy/systemd/wp-panel.service` and put it behind Nginx with TLS.
-   Set `WP_PANEL_SECURE_COOKIES=true` and `WP_PANEL_DEMO_DATA=false`.
-2. Node: `WP_AGENT_TOKEN=... deploy/install-agent.sh` on a clean Ubuntu 24.04 or
-   Debian 12 host. It installs Docker, Nginx, MariaDB, Restic and certbot, builds
-   the PHP-FPM images, and starts the agent as a systemd service in dry-run mode.
-3. Attach the node in the panel, flip `WP_AGENT_DRY_RUN=false`, create a site.
+1. Build a release bundle with `cargo build --release --workspace`, preserving
+   the `deploy/`, `static/`, and `target/release/` layout.
+2. Run the interactive installer on a clean Ubuntu 24.04 or Debian 12 host:
 
-Expose only 80/443 publicly. The agent's port should be reachable from the panel
-only (private network, VPN, or a firewall rule for the panel's IP).
+   ```bash
+   sudo deploy/install.sh                       # choose panel, agent, or both
+   sudo deploy/install.sh --role all-in-one     # panel + loopback-only agent
+   ```
+
+   It installs the panel service, or Docker/Nginx/MariaDB/Restic/certbot plus the
+   node agent, writes root-only environment files, and keeps every fresh agent in
+   dry-run mode. For automation, use `--non-interactive` with the environment
+   variables listed by `deploy/install.sh --help`.
+3. For a separate node, provide its panel IP when prompted; the installer adds a
+   UFW rule that allows only that IP to port 8443. Attach the agent using its TLS
+   fingerprint, review dry-run logs, then explicitly set
+   `WP_AGENT_DRY_RUN=false` and create a site.
+
+The installer deliberately does not guess DNS ownership or issue the panel's
+public certificate. Configure the panel Nginx TLS vhost afterward using
+[`plans/DEPLOYMENT.md`](./plans/DEPLOYMENT.md). Expose only 80/443 publicly; the
+agent's port must be panel-only (or loopback-only on an all-in-one host).
 
 ## How it works
 
